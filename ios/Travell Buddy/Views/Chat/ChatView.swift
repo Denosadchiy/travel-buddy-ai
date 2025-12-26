@@ -145,6 +145,22 @@ struct ChatView: View {
             }
 
             Spacer()
+
+            // Update plan button
+            Button(action: { updatePlan() }) {
+                if viewModel.isUpdatingPlan {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                        .frame(width: 32, height: 32)
+                } else {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(.travelBuddyOrange)
+                        .frame(width: 32, height: 32)
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(viewModel.isUpdatingPlan || viewModel.isSending)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -226,6 +242,14 @@ struct ChatView: View {
         // Send message via ViewModel (async)
         Task {
             await viewModel.sendMessage(textToSend)
+        }
+    }
+
+    // MARK: Update Plan
+
+    private func updatePlan() {
+        Task {
+            await viewModel.requestPlanUpdate()
         }
     }
 }

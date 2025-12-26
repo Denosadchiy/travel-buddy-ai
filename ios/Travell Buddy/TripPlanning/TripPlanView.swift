@@ -518,8 +518,13 @@ extension TripPlanView {
     private func openChat() {
         guard let plan = viewModel.plan else { return }
 
-        // Create ChatViewModel with the trip ID
-        chatViewModel = ChatViewModel(tripId: plan.tripId)
+        // Create ChatViewModel with the trip ID and plan update callback
+        chatViewModel = ChatViewModel(
+            tripId: plan.tripId,
+            onPlanUpdateRequested: { [weak viewModel] in
+                await viewModel?.updatePlanFromChat()
+            }
+        )
         isShowingChat = true
     }
 }

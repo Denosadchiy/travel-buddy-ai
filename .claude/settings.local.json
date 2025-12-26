@@ -12,7 +12,8 @@
       "Bash(docker-compose ps)",
       "Bash(cd /Users/denosadchiy/Desktop/Travel\\\\ Buddy\\\\ Ai && TRIP_CHAT_MODEL=\"mistralai/Mistral-Nemo-Instruct-2407\" make check-google-places:*)",
       "Bash(cd /Users/denosadchiy/Desktop/Travel\\\\ Buddy\\\\ Ai && TRIP_CHAT_MODEL=\"mistralai/Mistral-Nemo-Instruct-2407\" make check-google-routes:*)",
-      "Bash(cd /Users/denosadchiy/Desktop/Travel\\\\ Buddy\\\\ Ai && TRIP_CHAT_MODEL=\"mistralai/Mistral-Nemo-Instruct-2407\" make check-externals:*)"
+      "Bash(cd /Users/denosadchiy/Desktop/Travel\\\\ Buddy\\\\ Ai && TRIP_CHAT_MODEL=\"mistralai/Mistral-Nemo-Instruct-2407\" make check-externals:*)",
+      "Bash(xcodebuild:*)"
     ]
   }
 }

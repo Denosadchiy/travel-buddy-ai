@@ -128,6 +128,49 @@ final class TripPlanViewModel: ObservableObject {
         }
     }
 
+    /// Update plan from chat (re-run planning pipeline for existing trip)
+    @MainActor
+    func updatePlanFromChat() async {
+        guard let currentPlan = plan else {
+            errorMessage = "Нет активного маршрута для обновления"
+            return
+        }
+
+        isLoading = true
+        errorMessage = nil
+
+        print("🔄 Updating trip plan for trip: \(currentPlan.tripId)")
+
+        do {
+            // 1. Re-run planning pipeline for the same trip
+            print("🗺️ Re-generating itinerary...")
+            let tripIdString = currentPlan.tripId.uuidString
+            let itinerary = try await apiClient.planTrip(tripId: tripIdString)
+            print("✅ Plan regenerated with \(itinerary.days.count) days")
+
+            // 2. Fetch complete updated itinerary
+            print("📋 Fetching updated itinerary...")
+            let fullItinerary = try await apiClient.getItinerary(tripId: tripIdString)
+            print("✅ Full itinerary fetched")
+
+            // 3. Convert to TripPlan (preserve existing metadata)
+            self.plan = fullItinerary.toTripPlan(
+                destinationCity: currentPlan.destinationCity,
+                budget: currentPlan.comfortLevel,
+                interests: currentPlan.interestsSummary.components(separatedBy: ", "),
+                travelersCount: currentPlan.travellersCount
+            )
+
+            isLoading = false
+            print("🎉 Trip plan successfully updated!")
+
+        } catch {
+            self.errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            isLoading = false
+            print("❌ Error updating plan: \(self.errorMessage ?? "Unknown error")")
+        }
+    }
+
     // MARK: - Mock Generation (Fallback)
 
     /// Generate mock trip plan (for testing/fallback)

@@ -10,19 +10,25 @@ import Foundation
 final class ChatViewModel: ObservableObject {
     @Published var messages: [ChatMessage]
     @Published var isSending: Bool = false
+    @Published var isUpdatingPlan: Bool = false
     @Published var errorMessage: String?
 
     private let tripId: UUID
     private let apiClient: TripPlanningAPIClient
 
+    /// Callback to trigger plan update in parent view model
+    var onPlanUpdateRequested: (() async -> Void)?
+
     init(
         tripId: UUID,
         initialMessages: [ChatMessage] = [],
-        apiClient: TripPlanningAPIClient = .shared
+        apiClient: TripPlanningAPIClient = .shared,
+        onPlanUpdateRequested: (() async -> Void)? = nil
     ) {
         self.tripId = tripId
         self.apiClient = apiClient
         self.messages = initialMessages
+        self.onPlanUpdateRequested = onPlanUpdateRequested
 
         // Add default welcome message if no initial messages
         if initialMessages.isEmpty {
@@ -100,5 +106,32 @@ final class ChatViewModel: ObservableObject {
         }
 
         isSending = false
+    }
+
+    /// Request plan update based on chat preferences
+    @MainActor
+    func requestPlanUpdate() async {
+        guard let onPlanUpdateRequested else {
+            print("⚠️ No plan update handler configured")
+            return
+        }
+
+        isUpdatingPlan = true
+        print("🔄 Requesting plan update...")
+
+        // Call the parent's update method
+        await onPlanUpdateRequested()
+
+        // Add a system message to confirm
+        let systemMessage = ChatMessage(
+            id: UUID(),
+            text: "✅ Маршрут обновлён с учётом ваших пожеланий. Вернитесь к экрану маршрута, чтобы увидеть изменения.",
+            isFromUser: false,
+            timestamp: Date()
+        )
+        messages.append(systemMessage)
+
+        isUpdatingPlan = false
+        print("✅ Plan update completed")
     }
 }
