@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: tripplanner_db
+    environment:
+      POSTGRES_USER: tripplanner
+      POSTGRES_PASSWORD: tripplanner
+      POSTGRES_DB: tripplanner
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tripplanner"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tripplanner_api
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://tripplanner:tripplanner@db:5432/tripplanner
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-3-5-sonnet-20241022}
+      HOST: 0.0.0.0
+      PORT: 8000
+      DEBUG: ${DEBUG:-true}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  postgres_data:
