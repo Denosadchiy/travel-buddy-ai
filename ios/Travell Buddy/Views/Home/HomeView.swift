@@ -29,7 +29,7 @@ struct HomeView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     // Компактный чат-бар (открывается при нажатии)
-                    NavigationLink(destination: ChatView(messages: $chatMessages)) {
+                    NavigationLink(destination: ChatView(viewModel: ChatViewModel(tripId: UUID(), initialMessages: chatMessages))) {
                         ChatBarView(messages: chatMessages)
                     }
                     .buttonStyle(.plain)

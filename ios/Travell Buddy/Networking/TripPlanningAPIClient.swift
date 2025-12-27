@@ -51,16 +51,19 @@ final class TripPlanningAPIClient {
         print("📡 Response status: \(httpResponse.statusCode)")
 
         switch httpResponse.statusCode {
-        case 201:
+        case 200, 201:
             // Success - decode response
             let decoder = JSONDecoder()
-            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            // Don't use convertFromSnakeCase - CodingKeys handle snake_case mapping
             do {
                 let tripResponse = try decoder.decode(TripResponseDTO.self, from: data)
                 print("✅ Trip created: \(tripResponse.id)")
                 return tripResponse
             } catch {
                 print("❌ Decoding error: \(error)")
+                if let jsonString = String(data: data, encoding: .utf8) {
+                    print("📄 Response JSON: \(jsonString.prefix(500))")
+                }
                 throw APIError.decodingError(error)
             }
 
@@ -102,7 +105,7 @@ final class TripPlanningAPIClient {
         case 201:
             // Success - decode itinerary
             let decoder = JSONDecoder()
-            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            // CodingKeys handle snake_case mapping
             do {
                 let itinerary = try decoder.decode(ItineraryResponseDTO.self, from: data)
                 print("✅ Plan generated with \(itinerary.days.count) days")
@@ -150,7 +153,7 @@ final class TripPlanningAPIClient {
         case 200:
             // Success - decode itinerary
             let decoder = JSONDecoder()
-            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            // CodingKeys handle snake_case mapping
             do {
                 let itinerary = try decoder.decode(ItineraryResponseDTO.self, from: data)
                 print("✅ Itinerary fetched with \(itinerary.days.count) days")
@@ -207,7 +210,7 @@ final class TripPlanningAPIClient {
         case 200:
             // Success - decode chat response
             let decoder = JSONDecoder()
-            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            // CodingKeys handle snake_case mapping
             do {
                 let chatResponse = try decoder.decode(TripChatResponseDTO.self, from: data)
                 print("✅ Chat message sent, assistant replied: \(chatResponse.assistantMessage.prefix(50))...")

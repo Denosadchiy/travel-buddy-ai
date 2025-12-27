@@ -7,7 +7,7 @@
 
 import Foundation
 
-enum Environment {
+enum APIEnvironment {
     case development
     case staging
     case production
@@ -27,7 +27,7 @@ enum Environment {
 
 struct AppConfig {
     /// Current environment (hardcoded to development for now)
-    static let environment: Environment = .development
+    static let environment: APIEnvironment = .development
 
     /// Base URL for API requests
     static var baseURL: URL { environment.baseURL }

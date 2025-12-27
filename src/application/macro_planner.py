@@ -109,13 +109,55 @@ Daily Routine:
 
         return context
 
+    def _normalize_time_string(self, time_str: str) -> str:
+        """
+        Normalize time string to HH:MM:SS format.
+        Handles malformed LLM outputs like ':00:00' or '9:00:00'.
+        """
+        if not time_str:
+            return "00:00:00"
+
+        time_str = time_str.strip()
+
+        # Handle case where LLM returns ':MM:SS' (missing hour)
+        if time_str.startswith(':'):
+            time_str = '00' + time_str
+
+        # Split into parts
+        parts = time_str.split(':')
+        if len(parts) != 3:
+            # Invalid format, return default
+            return "00:00:00"
+
+        # Pad hour with leading zero if needed
+        hour = parts[0].zfill(2) if parts[0] else '00'
+        minute = parts[1].zfill(2) if parts[1] else '00'
+        second = parts[2].zfill(2) if parts[2] else '00'
+
+        return f"{hour}:{minute}:{second}"
+
+    def _normalize_block_data(self, block_data: dict) -> dict:
+        """Normalize block data before parsing into SkeletonBlock."""
+        normalized = block_data.copy()
+
+        # Normalize time fields
+        if 'start_time' in normalized:
+            normalized['start_time'] = self._normalize_time_string(normalized['start_time'])
+        if 'end_time' in normalized:
+            normalized['end_time'] = self._normalize_time_string(normalized['end_time'])
+
+        return normalized
+
     def _parse_skeleton_response(self, llm_response: dict) -> list[DaySkeleton]:
         """Parse LLM JSON response into DaySkeleton objects."""
         days_data = llm_response.get("days", [])
         skeletons = []
 
         for day_data in days_data:
-            blocks = [SkeletonBlock(**block_data) for block_data in day_data.get("blocks", [])]
+            # Normalize and parse blocks
+            normalized_blocks = [self._normalize_block_data(block_data) for block_data in day_data.get("blocks", [])]
+            blocks = [SkeletonBlock(**block_data) for block_data in normalized_blocks]
+
             skeleton = DaySkeleton(
                 day_number=day_data["day_number"],
                 date=day_data["date"],
@@ -162,7 +204,7 @@ Daily Routine:
             llm_response = await self.llm_client.generate_structured(
                 prompt=user_prompt,
                 system_prompt=self.SYSTEM_PROMPT,
-                max_tokens=2048,  # Higher limit for planning
+                max_tokens=4096,  # Increased limit for multi-day trips with detailed blocks
             )
         except Exception as e:
             raise ValueError(f"LLM failed to generate macro plan: {e}")

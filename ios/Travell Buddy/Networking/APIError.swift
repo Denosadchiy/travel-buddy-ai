@@ -89,7 +89,9 @@ enum APIError: Error, LocalizedError {
     /// Whether this error is retryable
     var isRetryable: Bool {
         switch self {
-        case .networkError, .timeout, .httpError(let code, _) where code >= 500:
+        case .networkError, .timeout:
+            return true
+        case .httpError(let code, _) where code >= 500:
             return true
         case .decodingError, .serverError:
             return true

@@ -10,7 +10,7 @@ from typing import Optional
 from uuid import UUID, uuid4
 
 import httpx
-from sqlalchemy import select, or_, and_
+from sqlalchemy import select, or_, and_, String
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
@@ -188,8 +188,11 @@ class DBPOIProvider(POIProvider):
         # Add category/tag filters
         filters = []
         for category in desired_categories:
+            # Match by category
             filters.append(POIModel.category == category)
-            filters.append(POIModel.tags.contains([category]))
+            # Match by tags (JSON contains operator for PostgreSQL)
+            # Use cast to text for JSON array comparison
+            filters.append(POIModel.tags.cast(String).contains(category))
 
         if filters:
             query = query.where(or_(*filters))
