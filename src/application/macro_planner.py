@@ -199,15 +199,29 @@ Daily Routine:
         trip_context = self._build_trip_context(trip_spec)
         user_prompt = self._build_planning_prompt(trip_context)
 
-        # 3. Call LLM for macro planning
-        try:
-            llm_response = await self.llm_client.generate_structured(
-                prompt=user_prompt,
-                system_prompt=self.SYSTEM_PROMPT,
-                max_tokens=4096,  # Increased limit for multi-day trips with detailed blocks
-            )
-        except Exception as e:
-            raise ValueError(f"LLM failed to generate macro plan: {e}")
+        # 3. Call LLM for macro planning (with retry on truncated response)
+        max_retries = 2
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                # Use higher token limit for longer trips
+                num_days = (trip_spec.end_date - trip_spec.start_date).days + 1
+                token_limit = 4096 if num_days <= 3 else 8192
+
+                llm_response = await self.llm_client.generate_structured(
+                    prompt=user_prompt,
+                    system_prompt=self.SYSTEM_PROMPT,
+                    max_tokens=token_limit,
+                )
+                break  # Success, exit retry loop
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    # Log retry attempt
+                    print(f"LLM attempt {attempt + 1} failed, retrying: {e}")
+                    continue
+                raise ValueError(f"LLM failed to generate macro plan: {last_error}")
 
         # 4. Parse into DaySkeleton objects
         try:

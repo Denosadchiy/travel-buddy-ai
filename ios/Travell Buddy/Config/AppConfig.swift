@@ -32,6 +32,6 @@ struct AppConfig {
     /// Base URL for API requests
     static var baseURL: URL { environment.baseURL }
 
-    /// Request timeout in seconds
-    static let requestTimeout: TimeInterval = 30
+    /// Request timeout in seconds (increased for LLM-based plan generation)
+    static let requestTimeout: TimeInterval = 120
 }

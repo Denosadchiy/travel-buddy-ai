@@ -121,6 +121,8 @@ final class TripPlanViewModel: ObservableObject {
         defer { isLoading = false }
 
         print("🚀 Starting trip plan generation for \(destinationCity)")
+        print("🔧 API Client: \(type(of: apiClient))")
+        print("🔧 Base URL: \(AppConfig.baseURL)")
 
         do {
             // 1. Create trip request DTO
@@ -160,6 +162,11 @@ final class TripPlanViewModel: ObservableObject {
             print("🎉 Trip plan successfully generated!")
 
         } catch {
+            print("❌ Raw error: \(error)")
+            print("❌ Error type: \(type(of: error))")
+            if let apiError = error as? APIError {
+                print("❌ APIError details: \(apiError)")
+            }
             self.errorMessage = (error as? LocalizedError)?.errorDescription
                 ?? "Что-то пошло не так. Попробуйте ещё раз."
             print("❌ Error generating plan: \(self.errorMessage ?? "Unknown error")")

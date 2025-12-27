@@ -42,6 +42,8 @@ struct RequestBuilder {
             throw APIError.invalidURL
         }
 
+        print("🔗 Building request: \(method.rawValue) \(url.absoluteString)")
+
         // Create request
         var request = URLRequest(url: url)
         request.httpMethod = method.rawValue

@@ -102,7 +102,7 @@ final class TripPlanningAPIClient {
         print("📡 Response status: \(httpResponse.statusCode)")
 
         switch httpResponse.statusCode {
-        case 201:
+        case 200, 201:
             // Success - decode itinerary
             let decoder = JSONDecoder()
             // CodingKeys handle snake_case mapping
@@ -112,6 +112,9 @@ final class TripPlanningAPIClient {
                 return itinerary
             } catch {
                 print("❌ Decoding error: \(error)")
+                if let jsonString = String(data: data, encoding: .utf8) {
+                    print("📄 Response JSON (first 1000 chars): \(jsonString.prefix(1000))")
+                }
                 throw APIError.decodingError(error)
             }
 
