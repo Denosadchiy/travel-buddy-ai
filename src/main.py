@@ -13,6 +13,7 @@ from src.api.macro_plan import router as macro_plan_router
 from src.api.poi_plan import router as poi_plan_router
 from src.api.itinerary import router as itinerary_router
 from src.api.critique import router as critique_router
+from src.api.fast_draft import router as fast_draft_router
 
 
 @asynccontextmanager
@@ -55,6 +56,7 @@ app.include_router(macro_plan_router, prefix="/api")
 app.include_router(poi_plan_router, prefix="/api")
 app.include_router(itinerary_router, prefix="/api")
 app.include_router(critique_router, prefix="/api")
+app.include_router(fast_draft_router, prefix="/api")
 
 
 @app.get("/")

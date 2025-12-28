@@ -14,6 +14,7 @@ struct TripPlanView: View {
     @State private var isShowingChat: Bool = false
     @State private var editViewModel: EditDayViewModel?
     @State private var chatViewModel: ChatViewModel?
+    @State private var selectedPlace: Place?
 
     init(viewModel: TripPlanViewModel) {
         _viewModel = StateObject(wrappedValue: viewModel)
@@ -87,6 +88,11 @@ struct TripPlanView: View {
             }
         }
         .background(chatNavigationLink)
+        .sheet(item: $selectedPlace) { place in
+            PlaceDetailsSheet(place: place)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
         .onChange(of: isShowingEditDay) { newValue in
             if !newValue {
                 editViewModel = nil
@@ -284,7 +290,12 @@ struct TripPlanView: View {
     private func activityTimeline(activities: [TripActivity]) -> some View {
         VStack(spacing: 12) {
             ForEach(Array(activities.enumerated()), id: \.element.id) { index, activity in
-                activityRow(activity: activity, isLast: index == activities.count - 1)
+                Button {
+                    selectedPlace = Place(from: activity)
+                } label: {
+                    activityRow(activity: activity, isLast: index == activities.count - 1)
+                }
+                .buttonStyle(PlainButtonStyle())
             }
         }
         .padding(14)

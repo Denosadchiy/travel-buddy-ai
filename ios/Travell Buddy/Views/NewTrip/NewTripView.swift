@@ -6,6 +6,18 @@
 //
 
 import SwiftUI
+import MapKit
+
+// MARK: - Route Building Data
+
+struct RouteBuildingData: Identifiable {
+    let id = UUID()
+    let tripId: UUID
+    let cityName: String
+    let coordinate: CLLocationCoordinate2D
+}
+
+// MARK: - NewTripView
 
 struct NewTripView: View {
     let prefilledTicket: FlightTicket?
@@ -18,6 +30,9 @@ struct NewTripView: View {
     @State private var childrenCount: Int = 0
     @State private var showTravelersPicker: Bool = false
     @State private var selectedInterests: Set<String> = ["Гастрономия", "Ночная жизнь", "Природа и виды"]
+
+    // Route building state - using Identifiable item for fullScreenCover
+    @State private var routeBuildingData: RouteBuildingData?
     
     // Форматированная строка путешественников
     private var travelersText: String {
@@ -169,6 +184,38 @@ struct NewTripView: View {
                 startDate = planning.startDate
                 endDate = planning.endDate
             }
+        }
+        .fullScreenCover(item: $routeBuildingData) { data in
+            RouteBuildingView(
+                cityName: data.cityName,
+                cityCoordinate: data.coordinate,
+                tripId: data.tripId,
+                onRouteReady: { itinerary in
+                    // Закрываем экран загрузки
+                    routeBuildingData = nil
+
+                    // Создаём TripPlan из itinerary
+                    if tripPlanViewModel == nil {
+                        tripPlanViewModel = TripPlanViewModel()
+                    }
+
+                    tripPlanViewModel?.plan = itinerary.toTripPlan(
+                        destinationCity: data.cityName,
+                        budget: selectedBudget,
+                        interests: Array(selectedInterests).sorted(),
+                        travelersCount: adultsCount + childrenCount
+                    )
+
+                    // Показываем экран плана
+                    isShowingTripPlan = true
+                },
+                onRetry: {
+                    // Закрываем и показываем ошибку
+                    routeBuildingData = nil
+                    planGenerationError = "Не удалось сгенерировать маршрут. Попробуйте ещё раз."
+                    showErrorAlert = true
+                }
+            )
         }
     }
 
@@ -771,35 +818,103 @@ struct NewTripView: View {
     }
 
     private func openTripPlan() {
-        // Create ViewModel if needed
-        if tripPlanViewModel == nil {
-            tripPlanViewModel = TripPlanViewModel()
-        }
+        print("🚀 openTripPlan called for city: \(selectedCity)")
 
-        guard let viewModel = tripPlanViewModel else { return }
+        // Geocode city to get coordinates
+        let geocoder = CLGeocoder()
+        geocoder.geocodeAddressString(selectedCity) { placemarks, error in
+            print("📍 Geocoding result: \(placemarks?.count ?? 0) placemarks, error: \(String(describing: error))")
+            let coordinate: CLLocationCoordinate2D
 
-        // Start async plan generation
-        Task {
-            await viewModel.generatePlan(
-                destinationCity: selectedCity,
-                startDate: startDate,
-                endDate: endDate,
-                selectedInterests: Array(selectedInterests).sorted(),
-                budgetLevel: selectedBudget,
-                travellersCount: adultsCount + childrenCount
-            )
+            if let placemark = placemarks?.first,
+               let location = placemark.location {
+                coordinate = location.coordinate
+            } else {
+                // Default coordinates for common cities
+                coordinate = Self.defaultCoordinate(for: selectedCity)
+            }
 
-            // Check if plan was generated successfully
-            await MainActor.run {
-                if viewModel.plan != nil {
-                    // Success - navigate to trip plan
-                    isShowingTripPlan = true
-                } else if let error = viewModel.errorMessage {
-                    // Error - show alert
-                    planGenerationError = error
-                    showErrorAlert = true
+            // Create trip first
+            Task {
+                do {
+                    let apiClient = TripPlanningAPIClient()
+
+                    // Format dates as YYYY-MM-DD
+                    let dateFormatter = DateFormatter()
+                    dateFormatter.dateFormat = "yyyy-MM-dd"
+                    let startDateString = dateFormatter.string(from: self.startDate)
+                    let endDateString = dateFormatter.string(from: self.endDate)
+
+                    // Build trip request
+                    let tripRequest = TripCreateRequestDTO(
+                        city: self.selectedCity,
+                        startDate: startDateString,
+                        endDate: endDateString,
+                        numTravelers: self.adultsCount + self.childrenCount,
+                        pace: "medium",
+                        budget: self.mapBudgetToAPI(self.selectedBudget),
+                        interests: Array(self.selectedInterests).sorted(),
+                        dailyRoutine: nil,
+                        hotelLocation: nil,
+                        additionalPreferences: nil
+                    )
+
+                    // Create trip
+                    let tripResponse = try await apiClient.createTrip(tripRequest)
+
+                    // Parse trip ID
+                    guard let tripId = UUID(uuidString: tripResponse.id) else {
+                        throw APIError.decodingError(NSError(domain: "Invalid trip ID", code: -1))
+                    }
+
+                    await MainActor.run {
+                        print("✅ Trip created successfully, showing route building view")
+                        print("✅ tripId: \(tripId)")
+                        print("✅ coordinate: \(coordinate.latitude), \(coordinate.longitude)")
+
+                        // Create data object and show cover
+                        self.routeBuildingData = RouteBuildingData(
+                            tripId: tripId,
+                            cityName: self.selectedCity,
+                            coordinate: coordinate
+                        )
+                    }
+                } catch {
+                    await MainActor.run {
+                        self.planGenerationError = "Не удалось создать поездку: \(error.localizedDescription)"
+                        self.showErrorAlert = true
+                    }
                 }
             }
+        }
+    }
+
+    private static func defaultCoordinate(for city: String) -> CLLocationCoordinate2D {
+        // Common city coordinates
+        let cityCoordinates: [String: CLLocationCoordinate2D] = [
+            "Рим": CLLocationCoordinate2D(latitude: 41.9028, longitude: 12.4964),
+            "Rome": CLLocationCoordinate2D(latitude: 41.9028, longitude: 12.4964),
+            "Стамбул": CLLocationCoordinate2D(latitude: 41.0082, longitude: 28.9784),
+            "Istanbul": CLLocationCoordinate2D(latitude: 41.0082, longitude: 28.9784),
+            "Бали": CLLocationCoordinate2D(latitude: -8.3405, longitude: 115.0920),
+            "Bali": CLLocationCoordinate2D(latitude: -8.3405, longitude: 115.0920),
+            "Тбилиси": CLLocationCoordinate2D(latitude: 41.7151, longitude: 44.8271),
+            "Tbilisi": CLLocationCoordinate2D(latitude: 41.7151, longitude: 44.8271),
+            "Париж": CLLocationCoordinate2D(latitude: 48.8566, longitude: 2.3522),
+            "Paris": CLLocationCoordinate2D(latitude: 48.8566, longitude: 2.3522),
+            "Барселона": CLLocationCoordinate2D(latitude: 41.3851, longitude: 2.1734),
+            "Barcelona": CLLocationCoordinate2D(latitude: 41.3851, longitude: 2.1734),
+        ]
+
+        return cityCoordinates[city] ?? CLLocationCoordinate2D(latitude: 41.9028, longitude: 12.4964)
+    }
+
+    private func mapBudgetToAPI(_ budget: String) -> String {
+        switch budget {
+        case "Эконом": return "low"
+        case "Комфорт": return "medium"
+        case "Премиум": return "high"
+        default: return "medium"
         }
     }
 

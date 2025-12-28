@@ -7,7 +7,20 @@
 
 import Foundation
 
-final class TripPlanningAPIClient {
+// MARK: - Protocol
+
+protocol TripPlanningAPIClientProtocol {
+    func createTrip(_ request: TripCreateRequestDTO) async throws -> TripResponseDTO
+    func generatePlan(tripId: UUID) async throws -> ItineraryResponseDTO
+    func generateFastDraft(tripId: UUID) async throws -> ItineraryResponseDTO
+    func planTrip(tripId: String) async throws -> ItineraryResponseDTO
+    func getItinerary(tripId: String) async throws -> ItineraryResponseDTO
+    func sendChatMessage(tripId: UUID, message: String) async throws -> TripChatResponseDTO
+}
+
+// MARK: - Implementation
+
+final class TripPlanningAPIClient: TripPlanningAPIClientProtocol {
     static let shared = TripPlanningAPIClient()
 
     private let session: URLSession
@@ -81,6 +94,62 @@ final class TripPlanningAPIClient {
     }
 
     /// Generate trip plan (macro + POI + route optimization)
+    /// POST /trips/{trip_id}/plan
+    func generatePlan(tripId: UUID) async throws -> ItineraryResponseDTO {
+        try await planTrip(tripId: tripId.uuidString.lowercased())
+    }
+
+    /// Generate fast draft itinerary (optimized for p95 < 20s)
+    /// POST /trips/{trip_id}/fast-draft
+    func generateFastDraft(tripId: UUID) async throws -> ItineraryResponseDTO {
+        print("⚡ Generating fast draft: \(tripId)")
+
+        // Build request
+        let urlRequest = try requestBuilder.buildRequest(
+            path: "trips/\(tripId.uuidString.lowercased())/fast-draft",
+            method: .post
+        )
+
+        // Execute request
+        let (data, response) = try await session.data(for: urlRequest)
+
+        // Handle response
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.networkError(NSError(domain: "Invalid response", code: -1))
+        }
+
+        print("📡 Response status: \(httpResponse.statusCode)")
+
+        switch httpResponse.statusCode {
+        case 200, 201:
+            // Success - decode itinerary
+            let decoder = JSONDecoder()
+            do {
+                let itinerary = try decoder.decode(ItineraryResponseDTO.self, from: data)
+                print("✅ Fast draft generated with \(itinerary.days.count) days")
+                return itinerary
+            } catch {
+                print("❌ Decoding error: \(error)")
+                if let jsonString = String(data: data, encoding: .utf8) {
+                    print("📄 Response JSON (first 1000 chars): \(jsonString.prefix(1000))")
+                }
+                throw APIError.decodingError(error)
+            }
+
+        case 404:
+            throw APIError.tripNotFound
+
+        case 401:
+            throw APIError.unauthorized
+
+        default:
+            let message = String(data: data, encoding: .utf8)
+            print("❌ HTTP error: \(httpResponse.statusCode), message: \(message ?? "none")")
+            throw APIError.httpError(statusCode: httpResponse.statusCode, message: message)
+        }
+    }
+
+    /// Generate trip plan (macro + POI + route optimization) with String tripId
     /// POST /trips/{trip_id}/plan
     func planTrip(tripId: String) async throws -> ItineraryResponseDTO {
         print("🗺️ Planning trip: \(tripId)")

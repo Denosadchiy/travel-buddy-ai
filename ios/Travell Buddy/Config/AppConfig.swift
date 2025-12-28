@@ -32,6 +32,12 @@ struct AppConfig {
     /// Base URL for API requests
     static var baseURL: URL { environment.baseURL }
 
-    /// Request timeout in seconds (increased for LLM-based plan generation)
-    static let requestTimeout: TimeInterval = 120
+    /// Request timeout for fast draft (30s - server guarantees response in <20s)
+    static let fastDraftTimeout: TimeInterval = 30
+
+    /// Request timeout for full plan generation (5 min for background enrichment)
+    static let fullPlanTimeout: TimeInterval = 300
+
+    /// Default request timeout
+    static let requestTimeout: TimeInterval = 30
 }
