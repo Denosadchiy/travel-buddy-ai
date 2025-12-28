@@ -18,7 +18,18 @@ struct Place: Identifiable, Hashable {
 
     // Optional time info from itinerary
     let scheduledTime: String?
+    let endTime: String?
     let duration: TimeInterval?
+
+    // POI details
+    let rating: Double?
+    let tags: [String]?
+    let address: String?
+    let note: String?
+
+    // Travel info from previous stop
+    let travelTimeMinutes: Int?
+    let travelDistanceMeters: Int?
 
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
@@ -26,6 +37,27 @@ struct Place: Identifiable, Hashable {
 
     static func == (lhs: Place, rhs: Place) -> Bool {
         lhs.id == rhs.id
+    }
+
+    /// Calculated duration in minutes
+    var durationMinutes: Int? {
+        if let duration = duration {
+            return Int(duration / 60)
+        }
+
+        guard let endTime = endTime, let scheduledTime = scheduledTime else { return nil }
+        let timeComponents = scheduledTime.split(separator: ":")
+        let endComponents = endTime.split(separator: ":")
+        guard timeComponents.count >= 2, endComponents.count >= 2,
+              let startHour = Int(timeComponents[0]),
+              let startMin = Int(timeComponents[1]),
+              let endHour = Int(endComponents[0]),
+              let endMin = Int(endComponents[1]) else {
+            return nil
+        }
+        let startTotal = startHour * 60 + startMin
+        let endTotal = endHour * 60 + endMin
+        return endTotal - startTotal
     }
 }
 
@@ -105,7 +137,14 @@ extension Place {
         self.coordinate = activity.coordinate ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
         self.shortDescription = activity.description
         self.scheduledTime = activity.time
-        self.duration = nil
+        self.endTime = activity.endTime
+        self.duration = activity.durationMinutes.map { TimeInterval($0 * 60) }
+        self.rating = activity.rating
+        self.tags = activity.tags
+        self.address = activity.address
+        self.note = activity.note
+        self.travelTimeMinutes = activity.travelTimeMinutes
+        self.travelDistanceMeters = activity.travelDistanceMeters
     }
 }
 

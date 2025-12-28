@@ -54,11 +54,11 @@ class Settings(BaseSettings):
     )
 
     # Trip Chat Mode - optimized for cost (use cheaper/faster model)
-    # io.net default: mistralai/Mistral-Nemo-Instruct-2407
+    # io.net default: mistralai/Mistral-Nemo-Instruct-2407 (full model path required)
     # Anthropic default: claude-3-5-haiku-20241022
     trip_chat_model: str = Field(
         default="mistralai/Mistral-Nemo-Instruct-2407",
-        description="Model for trip chat (cheaper, faster for conversational updates)"
+        description="Model for trip chat (cheaper, faster for conversational updates). Use full model path for io.net."
     )
 
     # Macro Planning Mode - uses more powerful model for complex reasoning

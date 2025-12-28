@@ -12,6 +12,7 @@ struct TripPlanView: View {
     @State private var isShowingGuide: Bool = false
     @State private var isShowingEditDay: Bool = false
     @State private var isShowingChat: Bool = false
+    @State private var isShowingSummary: Bool = false
     @State private var editViewModel: EditDayViewModel?
     @State private var chatViewModel: ChatViewModel?
     @State private var selectedPlace: Place?
@@ -117,7 +118,9 @@ struct TripPlanView: View {
     }
     
     private func headerCard(plan: TripPlan) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let summary = plan.summary
+
+        return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("\(plan.destinationCity), \(dateRangeText(start: plan.startDate, end: plan.endDate))")
@@ -132,8 +135,8 @@ struct TripPlanView: View {
                         .truncationMode(.tail)
                 }
                 Spacer()
-                Button(action: {}) {
-                    Image(systemName: "pencil")
+                Button(action: { isShowingSummary = true }) {
+                    Image(systemName: "chart.bar.fill")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(Color(.label))
                         .frame(width: 28, height: 28)
@@ -144,20 +147,78 @@ struct TripPlanView: View {
                 }
                 .buttonStyle(.plain)
             }
-            
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    chipView(text: "\(plan.days.count) дней")
-                    chipView(text: "Средний темп")
-                    chipView(text: "Пешие маршруты")
-                }
-                .padding(.vertical, 2)
-            }
+
+            // Summary stats row
+            summaryStatsRow(summary: summary)
         }
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .fill(Color(.secondarySystemBackground))
+        )
+        .sheet(isPresented: $isShowingSummary) {
+            NavigationView {
+                TripSummaryView(summary: summary, coordinate: plan.cityCoordinate)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Button("Готово") {
+                                isShowingSummary = false
+                            }
+                        }
+                    }
+            }
+        }
+    }
+
+    private func summaryStatsRow(summary: TripSummary) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                summaryChip(
+                    icon: "figure.walk",
+                    text: summary.formattedTotalSteps,
+                    subtitle: "шагов"
+                )
+                summaryChip(
+                    icon: "map",
+                    text: summary.formattedTotalDistance,
+                    subtitle: nil
+                )
+                summaryChip(
+                    icon: "creditcard",
+                    text: summary.formattedTotalCostRange,
+                    subtitle: nil
+                )
+                summaryChip(
+                    icon: summary.overallIntensity.icon,
+                    text: summary.overallIntensity.displayName,
+                    subtitle: "темп"
+                )
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func summaryChip(icon: String, text: String, subtitle: String?) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 11))
+                .foregroundColor(Color(red: 0.90, green: 0.35, blue: 0.20))
+
+            Text(text)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(Color(red: 0.90, green: 0.35, blue: 0.20))
+
+            if let subtitle = subtitle {
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundColor(Color(red: 0.90, green: 0.35, blue: 0.20).opacity(0.8))
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(
+            Capsule()
+                .fill(Color(red: 1.0, green: 0.93, blue: 0.89))
         )
     }
     

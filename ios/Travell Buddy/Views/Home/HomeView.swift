@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct HomeView: View {
-    @State private var chatMessages: [ChatMessage] = ChatMessage.defaultMessages
+    @State private var chatMessages: [ChatMessage] = [ChatMessage.welcomeMessage]
     @State private var savedTicket: FlightTicket?
     @State private var navigateToTicketInput: Bool = false
     @State private var ticketForPlanning: FlightTicket?

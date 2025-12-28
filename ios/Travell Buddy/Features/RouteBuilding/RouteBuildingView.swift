@@ -173,19 +173,3 @@ struct RouteBuildingView: View {
         }
     }
 }
-
-// MARK: - Preview
-
-#if DEBUG
-struct RouteBuildingView_Previews: PreviewProvider {
-    static var previews: some View {
-        RouteBuildingView(
-            cityName: "Rome",
-            cityCoordinate: CLLocationCoordinate2D(latitude: 41.9028, longitude: 12.4964),
-            tripId: UUID(),
-            onRouteReady: { _ in },
-            onRetry: { }
-        )
-    }
-}
-#endif

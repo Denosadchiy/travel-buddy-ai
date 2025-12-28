@@ -97,6 +97,7 @@ extension ItineraryBlockDTO {
 
         // Format time (strip seconds if present)
         let time = formatTime(startTime)
+        let formattedEndTime = formatTime(endTime)
 
         // Map category from block type
         let category = mapBlockTypeToCategory(blockType)
@@ -104,6 +105,7 @@ extension ItineraryBlockDTO {
         return TripActivity(
             id: UUID(), // Generate new UUID since backend uses string IDs
             time: time,
+            endTime: formattedEndTime,
             title: poi.name,
             description: poi.location ?? "",
             category: category,
@@ -111,7 +113,12 @@ extension ItineraryBlockDTO {
             note: notes,
             latitude: poi.lat,
             longitude: poi.lon,
-            travelPolyline: travelPolyline
+            travelPolyline: travelPolyline,
+            rating: poi.rating,
+            tags: poi.tags,
+            poiId: poi.poiId,
+            travelTimeMinutes: travelTimeFromPrev,
+            travelDistanceMeters: travelDistanceMeters
         )
     }
 

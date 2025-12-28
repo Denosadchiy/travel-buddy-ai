@@ -21,36 +21,37 @@ class TripChatAssistant:
     Uses LLM to interpret user messages and update TripSpec.
     """
 
-    # System prompt for Trip Chat Mode
-    SYSTEM_PROMPT = """You are a helpful travel planning assistant. Your job is to:
-1. Understand user preferences, constraints, and requests about their trip
-2. Respond with a friendly, concise message (1-2 sentences)
-3. Extract structured updates to apply to their trip specification
+    # System prompt for Trip Chat Mode (Russian language)
+    SYSTEM_PROMPT = """Ты — дружелюбный помощник по планированию путешествий. Твоя задача:
+1. Понять предпочтения, ограничения и пожелания пользователя о поездке
+2. Ответить коротким, дружелюбным сообщением на русском языке (1-2 предложения)
+3. Извлечь структурированные обновления для спецификации поездки
 
-The user is planning a trip and may tell you things like:
-- Preferences: "We love techno music", "We prefer vegetarian food"
-- Constraints: "We hate museums", "Avoid touristy places"
-- Schedule changes: "We want to sleep in", "We prefer late dinners"
+Пользователь планирует поездку и может сказать что-то вроде:
+- Предпочтения: "Мы любим техно музыку", "Предпочитаем вегетарианскую еду"
+- Ограничения: "Мы не любим музеи", "Избегайте туристических мест"
+- Изменения расписания: "Хотим поспать подольше", "Предпочитаем поздние ужины"
 
-You MUST respond with valid JSON in this exact format:
+Ты ДОЛЖЕН отвечать валидным JSON в точно таком формате:
 {
-  "assistant_message": "Your friendly reply here",
+  "assistant_message": "Твой дружелюбный ответ на русском языке",
   "trip_updates": {
-    "interests": ["list", "of", "interests"],
+    "interests": ["список", "интересов"],
     "additional_preferences": {
-      "any_key": "any_value"
+      "любой_ключ": "любое_значение"
     }
   }
 }
 
-Rules for trip_updates:
-- Only include fields that should be updated based on the user's message
-- interests: list of interests/preferences (food, culture, nightlife, techno, etc.)
-- additional_preferences: free-form dict for any other preferences
-- Do NOT include fields like city, dates, num_travelers unless explicitly changed
-- If the message doesn't require any updates, set trip_updates to {}
+Правила для trip_updates:
+- Включай только поля, которые нужно обновить на основе сообщения пользователя
+- interests: список интересов/предпочтений (еда, культура, ночная жизнь, техно и т.д.)
+- additional_preferences: произвольный словарь для других предпочтений
+- НЕ включай поля city, dates, num_travelers, если они явно не изменились
+- Если сообщение не требует обновлений, установи trip_updates в {}
 
-Keep your assistant_message friendly, brief, and confirmatory."""
+ВАЖНО: Поле assistant_message ВСЕГДА должно быть на русском языке!
+Будь дружелюбным, кратким и подтверждай понимание пожеланий пользователя."""
 
     def __init__(
         self,
@@ -70,12 +71,12 @@ Keep your assistant_message friendly, brief, and confirmatory."""
 
     def _build_user_prompt(self, trip_context: str, user_message: str) -> str:
         """Build the user prompt with trip context."""
-        return f"""Current trip:
+        return f"""Текущая поездка:
 {trip_context}
 
-User message: {user_message}
+Сообщение пользователя: {user_message}
 
-Respond with JSON only."""
+Ответь только JSON."""
 
     def _safe_apply_trip_updates(self, trip_updates: dict) -> TripUpdateRequest:
         """
@@ -143,14 +144,14 @@ Respond with JSON only."""
                     trip=current_trip,
                 )
 
-        # 3. Build trip context for LLM
-        trip_context = f"""- City: {current_trip.city}
-- Dates: {current_trip.start_date} to {current_trip.end_date}
-- Travelers: {current_trip.num_travelers}
-- Pace: {current_trip.pace}
-- Budget: {current_trip.budget}
-- Interests: {', '.join(current_trip.interests) if current_trip.interests else 'none specified'}
-- Additional preferences: {json.dumps(current_trip.additional_preferences)}"""
+        # 3. Build trip context for LLM (Russian)
+        trip_context = f"""- Город: {current_trip.city}
+- Даты: {current_trip.start_date} — {current_trip.end_date}
+- Путешественников: {current_trip.num_travelers}
+- Темп: {current_trip.pace}
+- Бюджет: {current_trip.budget}
+- Интересы: {', '.join(current_trip.interests) if current_trip.interests else 'не указаны'}
+- Дополнительные предпочтения: {json.dumps(current_trip.additional_preferences, ensure_ascii=False)}"""
 
         # 4. Call LLM in Trip Chat Mode (use cheaper model)
         user_prompt = self._build_user_prompt(trip_context, user_message)

@@ -19,7 +19,7 @@ struct ChatTabView: View {
         // In production, this should be passed from the parent view
         _viewModel = StateObject(wrappedValue: ChatViewModel(
             tripId: UUID(),
-            initialMessages: ChatMessage.defaultMessages
+            initialMessages: [ChatMessage.welcomeMessage]
         ))
     }
 

@@ -54,12 +54,6 @@ struct NewTripView: View {
             text: "Расскажи мне о своих пожеланиях: любишь ли ты много ходить, хочешь больше музеев или баров, есть ли ограничения?",
             isFromUser: false,
             timestamp: Date()
-        ),
-        ChatMessage(
-            id: UUID(),
-            text: "Не люблю музеи, хочу больше прогулок по городу и крыши с видом.",
-            isFromUser: true,
-            timestamp: Date()
         )
     ]
     @State private var messageText: String = ""
@@ -233,7 +227,7 @@ struct NewTripView: View {
     }
     
     // MARK: City Section
-    
+
     private var citySection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -249,33 +243,11 @@ struct NewTripView: View {
                         .foregroundColor(.travelBuddyOrange)
                 }
             }
-            
-            // Поле ввода города
-            HStack(spacing: 12) {
-                Image(systemName: "mappin.circle.fill")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(Color(red: 1.0, green: 0.55, blue: 0.30))
-                
-                TextField("Введите город", text: $selectedCity)
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundColor(Color(.label))
-                
-                Button(action: {
-                    // Placeholder для голосового ввода
-                }) {
-                    Image(systemName: "mic.fill")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(Color(.secondaryLabel))
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color(.systemGray6))
-            )
-            
+
+            // Поле ввода города с автодополнением
+            DestinationAutocompleteField(cityName: $selectedCity)
+                .zIndex(10) // Чтобы dropdown был поверх других элементов
+
             // Популярные города
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {

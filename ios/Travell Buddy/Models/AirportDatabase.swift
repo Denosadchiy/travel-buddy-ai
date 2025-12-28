@@ -292,6 +292,254 @@ class AirportDatabase {
             airports: [
                 .init(code: "SIN", name: "Чанги", cityName: "Сингапур")
             ]
+        ),
+
+        // Дополнительные популярные города
+        CityAirport(
+            cityName: "Амстердам",
+            cityNameEn: "Amsterdam",
+            countryName: "Нидерланды",
+            airports: [.init(code: "AMS", name: "Схипхол", cityName: "Амстердам")]
+        ),
+        CityAirport(
+            cityName: "Прага",
+            cityNameEn: "Prague",
+            countryName: "Чехия",
+            airports: [.init(code: "PRG", name: "Вацлав Гавел", cityName: "Прага")]
+        ),
+        CityAirport(
+            cityName: "Вена",
+            cityNameEn: "Vienna",
+            countryName: "Австрия",
+            airports: [.init(code: "VIE", name: "Швехат", cityName: "Вена")]
+        ),
+        CityAirport(
+            cityName: "Будапешт",
+            cityNameEn: "Budapest",
+            countryName: "Венгрия",
+            airports: [.init(code: "BUD", name: "Ференц Лист", cityName: "Будапешт")]
+        ),
+        CityAirport(
+            cityName: "Лиссабон",
+            cityNameEn: "Lisbon",
+            countryName: "Португалия",
+            airports: [.init(code: "LIS", name: "Портела", cityName: "Лиссабон")]
+        ),
+        CityAirport(
+            cityName: "Афины",
+            cityNameEn: "Athens",
+            countryName: "Греция",
+            airports: [.init(code: "ATH", name: "Элефтериос Венизелос", cityName: "Афины")]
+        ),
+        CityAirport(
+            cityName: "Каир",
+            cityNameEn: "Cairo",
+            countryName: "Египет",
+            airports: [.init(code: "CAI", name: "Каир", cityName: "Каир")]
+        ),
+        CityAirport(
+            cityName: "Марракеш",
+            cityNameEn: "Marrakech",
+            countryName: "Марокко",
+            airports: [.init(code: "RAK", name: "Менара", cityName: "Марракеш")]
+        ),
+        CityAirport(
+            cityName: "Шанхай",
+            cityNameEn: "Shanghai",
+            countryName: "Китай",
+            airports: [
+                .init(code: "PVG", name: "Пудун", cityName: "Шанхай"),
+                .init(code: "SHA", name: "Хунцяо", cityName: "Шанхай")
+            ]
+        ),
+        CityAirport(
+            cityName: "Пекин",
+            cityNameEn: "Beijing",
+            countryName: "Китай",
+            airports: [
+                .init(code: "PEK", name: "Столичный", cityName: "Пекин"),
+                .init(code: "PKX", name: "Дасин", cityName: "Пекин")
+            ]
+        ),
+        CityAirport(
+            cityName: "Гонконг",
+            cityNameEn: "Hong Kong",
+            countryName: "Гонконг",
+            airports: [.init(code: "HKG", name: "Чхеклапкок", cityName: "Гонконг")]
+        ),
+        CityAirport(
+            cityName: "Мельбурн",
+            cityNameEn: "Melbourne",
+            countryName: "Австралия",
+            airports: [.init(code: "MEL", name: "Мельбурн", cityName: "Мельбурн")]
+        ),
+        CityAirport(
+            cityName: "Сидней",
+            cityNameEn: "Sydney",
+            countryName: "Австралия",
+            airports: [.init(code: "SYD", name: "Кингсфорд Смит", cityName: "Сидней")]
+        ),
+        CityAirport(
+            cityName: "Лос-Анджелес",
+            cityNameEn: "Los Angeles",
+            countryName: "США",
+            airports: [.init(code: "LAX", name: "Лос-Анджелес", cityName: "Лос-Анджелес")]
+        ),
+        CityAirport(
+            cityName: "Майами",
+            cityNameEn: "Miami",
+            countryName: "США",
+            airports: [.init(code: "MIA", name: "Майами", cityName: "Майами")]
+        ),
+        CityAirport(
+            cityName: "Мальдивы",
+            cityNameEn: "Maldives",
+            countryName: "Мальдивы",
+            airports: [.init(code: "MLE", name: "Велана", cityName: "Мале")]
+        ),
+        CityAirport(
+            cityName: "Канкун",
+            cityNameEn: "Cancun",
+            countryName: "Мексика",
+            airports: [.init(code: "CUN", name: "Канкун", cityName: "Канкун")]
+        ),
+        CityAirport(
+            cityName: "Венеция",
+            cityNameEn: "Venice",
+            countryName: "Италия",
+            airports: [.init(code: "VCE", name: "Марко Поло", cityName: "Венеция")]
+        ),
+        CityAirport(
+            cityName: "Флоренция",
+            cityNameEn: "Florence",
+            countryName: "Италия",
+            airports: [.init(code: "FLR", name: "Перетола", cityName: "Флоренция")]
+        ),
+        CityAirport(
+            cityName: "Ницца",
+            cityNameEn: "Nice",
+            countryName: "Франция",
+            airports: [.init(code: "NCE", name: "Лазурный Берег", cityName: "Ницца")]
+        ),
+        CityAirport(
+            cityName: "Мюнхен",
+            cityNameEn: "Munich",
+            countryName: "Германия",
+            airports: [.init(code: "MUC", name: "Мюнхен", cityName: "Мюнхен")]
+        ),
+        CityAirport(
+            cityName: "Цюрих",
+            cityNameEn: "Zurich",
+            countryName: "Швейцария",
+            airports: [.init(code: "ZRH", name: "Цюрих", cityName: "Цюрих")]
+        ),
+        CityAirport(
+            cityName: "Копенгаген",
+            cityNameEn: "Copenhagen",
+            countryName: "Дания",
+            airports: [.init(code: "CPH", name: "Каструп", cityName: "Копенгаген")]
+        ),
+        CityAirport(
+            cityName: "Стокгольм",
+            cityNameEn: "Stockholm",
+            countryName: "Швеция",
+            airports: [.init(code: "ARN", name: "Арланда", cityName: "Стокгольм")]
+        ),
+        CityAirport(
+            cityName: "Осло",
+            cityNameEn: "Oslo",
+            countryName: "Норвегия",
+            airports: [.init(code: "OSL", name: "Гардермуэн", cityName: "Осло")]
+        ),
+        CityAirport(
+            cityName: "Хельсинки",
+            cityNameEn: "Helsinki",
+            countryName: "Финляндия",
+            airports: [.init(code: "HEL", name: "Вантаа", cityName: "Хельсинки")]
+        ),
+        CityAirport(
+            cityName: "Варшава",
+            cityNameEn: "Warsaw",
+            countryName: "Польша",
+            airports: [.init(code: "WAW", name: "Шопен", cityName: "Варшава")]
+        ),
+        CityAirport(
+            cityName: "Краков",
+            cityNameEn: "Krakow",
+            countryName: "Польша",
+            airports: [.init(code: "KRK", name: "Балице", cityName: "Краков")]
+        ),
+        CityAirport(
+            cityName: "Дублин",
+            cityNameEn: "Dublin",
+            countryName: "Ирландия",
+            airports: [.init(code: "DUB", name: "Дублин", cityName: "Дублин")]
+        ),
+        CityAirport(
+            cityName: "Эдинбург",
+            cityNameEn: "Edinburgh",
+            countryName: "Великобритания",
+            airports: [.init(code: "EDI", name: "Эдинбург", cityName: "Эдинбург")]
+        ),
+        CityAirport(
+            cityName: "Брюссель",
+            cityNameEn: "Brussels",
+            countryName: "Бельгия",
+            airports: [.init(code: "BRU", name: "Завентем", cityName: "Брюссель")]
+        ),
+        CityAirport(
+            cityName: "Калининград",
+            cityNameEn: "Kaliningrad",
+            countryName: "Россия",
+            airports: [.init(code: "KGD", name: "Храброво", cityName: "Калининград")]
+        ),
+        CityAirport(
+            cityName: "Казань",
+            cityNameEn: "Kazan",
+            countryName: "Россия",
+            airports: [.init(code: "KZN", name: "Казань", cityName: "Казань")]
+        ),
+        CityAirport(
+            cityName: "Екатеринбург",
+            cityNameEn: "Yekaterinburg",
+            countryName: "Россия",
+            airports: [.init(code: "SVX", name: "Кольцово", cityName: "Екатеринбург")]
+        ),
+        CityAirport(
+            cityName: "Новосибирск",
+            cityNameEn: "Novosibirsk",
+            countryName: "Россия",
+            airports: [.init(code: "OVB", name: "Толмачёво", cityName: "Новосибирск")]
+        ),
+        CityAirport(
+            cityName: "Владивосток",
+            cityNameEn: "Vladivostok",
+            countryName: "Россия",
+            airports: [.init(code: "VVO", name: "Кневичи", cityName: "Владивосток")]
+        ),
+        CityAirport(
+            cityName: "Минск",
+            cityNameEn: "Minsk",
+            countryName: "Беларусь",
+            airports: [.init(code: "MSQ", name: "Минск", cityName: "Минск")]
+        ),
+        CityAirport(
+            cityName: "Ташкент",
+            cityNameEn: "Tashkent",
+            countryName: "Узбекистан",
+            airports: [.init(code: "TAS", name: "Ташкент", cityName: "Ташкент")]
+        ),
+        CityAirport(
+            cityName: "Самарканд",
+            cityNameEn: "Samarkand",
+            countryName: "Узбекистан",
+            airports: [.init(code: "SKD", name: "Самарканд", cityName: "Самарканд")]
+        ),
+        CityAirport(
+            cityName: "Бухара",
+            cityNameEn: "Bukhara",
+            countryName: "Узбекистан",
+            airports: [.init(code: "BHK", name: "Бухара", cityName: "Бухара")]
         )
     ]
 

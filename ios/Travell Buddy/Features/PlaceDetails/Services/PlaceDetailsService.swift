@@ -250,33 +250,3 @@ private struct PlaceDetailsDTO: Decodable {
     }
 }
 
-// MARK: - Mock Service for Preview/Development
-
-final class MockPlaceDetailsService: PlaceDetailsServiceProtocol {
-    var mockDelay: TimeInterval = 1.0
-    var shouldFail: Bool = false
-
-    func fetchDetails(for placeId: String) async throws -> PlaceDetails {
-        // Simulate network delay
-        try await Task.sleep(nanoseconds: UInt64(mockDelay * 1_000_000_000))
-
-        if shouldFail {
-            throw PlaceDetailsError.networkError(NSError(domain: "Mock", code: -1))
-        }
-
-        // Return mock data
-        let mockPlace = Place(
-            id: placeId,
-            name: "Колизей",
-            category: .attraction,
-            coordinate: .init(latitude: 41.8902, longitude: 12.4922),
-            shortDescription: "Древний римский амфитеатр",
-            scheduledTime: "10:00",
-            duration: 90 * 60
-        )
-
-        return PlaceDetails.mock(for: mockPlace)
-    }
-
-    func clearCache() {}
-}

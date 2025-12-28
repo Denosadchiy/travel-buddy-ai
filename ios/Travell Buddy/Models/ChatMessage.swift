@@ -17,21 +17,13 @@ struct ChatMessage: Identifiable {
 // MARK: - Default Messages
 
 extension ChatMessage {
-    /// Дефолтные демо-сообщения для чата (используются в HomeView и ChatTabView)
-    static var defaultMessages: [ChatMessage] {
-        [
-            ChatMessage(
-                id: UUID(),
-                text: "Расскажи мне о своих пожеланиях: любишь ли ты много ходить, хочешь больше музеев или баров, есть ли ограничения?",
-                isFromUser: false,
-                timestamp: Date()
-            ),
-            ChatMessage(
-                id: UUID(),
-                text: "Не люблю музеи, хочу больше прогулок по городу и крыши с видом.",
-                isFromUser: true,
-                timestamp: Date()
-            )
-        ]
+    /// Приветственное сообщение для чата
+    static var welcomeMessage: ChatMessage {
+        ChatMessage(
+            id: UUID(),
+            text: "Расскажи мне о своих пожеланиях: любишь ли ты много ходить, хочешь больше музеев или баров, есть ли ограничения?",
+            isFromUser: false,
+            timestamp: Date()
+        )
     }
 }
