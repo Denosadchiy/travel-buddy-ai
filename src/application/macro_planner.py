@@ -57,11 +57,27 @@ CRITICAL: You MUST respond with valid JSON only, matching this exact structure:
 Guidelines:
 - Respect wake/sleep times and meal windows from daily routine
 - Match pace level (slow=fewer activities, fast=packed schedule)
-- Include interests in desired_categories
 - Budget affects venue types (low=casual, high=fine dining)
 - Add nightlife blocks only if relevant to interests
 - Include rest blocks for slow/medium pace
 - Each day should have 3 meals + 2-4 activity blocks
+
+CRITICAL - Interest Categories:
+- YOU MUST use the user's interests to populate desired_categories for ALL activity blocks
+- Map interests to specific POI types:
+  * "gastronomy" → ["restaurant", "food", "cafe", "bakery", "market"]
+  * "history and museums" → ["museum", "historical site", "monument", "gallery"]
+  * "nightlife" → ["bar", "club", "nightclub", "live music"]
+  * "nature and views" → ["park", "viewpoint", "garden", "nature"]
+  * "shopping" → ["shopping", "market", "boutique", "store"]
+  * "cafes and desserts" → ["cafe", "dessert", "bakery", "pastry shop"]
+  * "modern art" → ["art gallery", "contemporary art", "museum"]
+  * "architecture and districts" → ["landmark", "neighborhood", "historic district"]
+  * "beach and water" → ["beach", "waterfront", "lake", "marina"]
+  * "activities and sports" → ["sports", "recreation", "adventure", "activities"]
+- For meal blocks, use "restaurant" plus cuisine relevant to city (e.g., "french restaurant" in Paris)
+- Each activity block MUST include 2-3 categories from the user's interests
+- DO NOT use generic categories like "sightseeing" or "tourist attraction"
 - NO explanations, NO markdown, ONLY valid JSON"""
 
     def __init__(self, llm_client: Optional[LLMClient] = None):

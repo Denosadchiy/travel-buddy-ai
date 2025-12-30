@@ -63,6 +63,7 @@ struct NewTripView: View {
     @State private var isGeneratingPlan: Bool = false
     @State private var planGenerationError: String?
     @State private var showErrorAlert: Bool = false
+    @State private var currentTripId: UUID?  // Хранит ID созданной поездки для чата
 
     let popularCities = ["Стамбул", "Рим", "Бали", "Тбилиси"]
 
@@ -707,31 +708,104 @@ struct NewTripView: View {
     private func sendMessage() {
         let trimmedText = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty else { return }
-        
+
+        // Add user message to chat
         let newMessage = ChatMessage(
             id: UUID(),
             text: trimmedText,
             isFromUser: true,
             timestamp: Date()
         )
-        
+
         withAnimation {
             chatMessages.append(newMessage)
         }
-        
+
         messageText = ""
         isTextFieldFocused = false
-        
-        // Симуляция ответа AI
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            let aiResponse = ChatMessage(
-                id: UUID(),
-                text: "Понял! Учту твои пожелания при составлении маршрута.",
-                isFromUser: false,
-                timestamp: Date()
-            )
-            withAnimation {
-                chatMessages.append(aiResponse)
+
+        // Send message to backend API
+        Task {
+            do {
+                // Create trip if it doesn't exist yet
+                if currentTripId == nil {
+                    let apiClient = TripPlanningAPIClient()
+
+                    // Format dates
+                    let dateFormatter = DateFormatter()
+                    dateFormatter.dateFormat = "yyyy-MM-dd"
+                    let startDateString = dateFormatter.string(from: self.startDate)
+                    let endDateString = dateFormatter.string(from: self.endDate)
+
+                    // Create trip with current parameters
+                    let tripRequest = TripCreateRequestDTO(
+                        city: self.selectedCity,
+                        startDate: startDateString,
+                        endDate: endDateString,
+                        numTravelers: self.adultsCount + self.childrenCount,
+                        pace: "medium",
+                        budget: self.mapBudgetToAPI(self.selectedBudget),
+                        interests: Array(self.selectedInterests).sorted(),
+                        dailyRoutine: nil,
+                        hotelLocation: nil,
+                        additionalPreferences: nil
+                    )
+
+                    let tripResponse = try await apiClient.createTrip(tripRequest)
+
+                    guard let tripId = UUID(uuidString: tripResponse.id) else {
+                        throw APIError.decodingError(NSError(domain: "Invalid trip ID", code: -1))
+                    }
+
+                    await MainActor.run {
+                        self.currentTripId = tripId
+                        print("✅ Trip created for chat: \(tripId)")
+                    }
+                }
+
+                // Send chat message
+                guard let tripId = currentTripId else {
+                    throw APIError.networkError(NSError(domain: "No trip ID available", code: -1))
+                }
+
+                let apiClient = TripPlanningAPIClient()
+                let chatResponse = try await apiClient.sendChatMessage(tripId: tripId, message: trimmedText)
+
+                // Add AI response to chat
+                await MainActor.run {
+                    let aiMessage = ChatMessage(
+                        id: UUID(),
+                        text: chatResponse.assistantMessage,
+                        isFromUser: false,
+                        timestamp: Date()
+                    )
+                    withAnimation {
+                        chatMessages.append(aiMessage)
+                    }
+
+                    // Update local state with potentially changed trip parameters
+                    // (interests might have been updated by chat)
+                    if !chatResponse.trip.interests.isEmpty {
+                        // Convert English interests back to Russian for UI display
+                        // This is a simplified version - you might want a reverse mapping
+                        self.selectedInterests = Set(chatResponse.trip.interests)
+                    }
+                }
+
+            } catch {
+                // Show error message in chat
+                await MainActor.run {
+                    let errorMessage = ChatMessage(
+                        id: UUID(),
+                        text: "Ошибка: не удалось отправить сообщение. \(error.localizedDescription)",
+                        isFromUser: false,
+                        timestamp: Date()
+                    )
+                    withAnimation {
+                        chatMessages.append(errorMessage)
+                    }
+                }
+                print("❌ Chat error: \(error)")
             }
         }
     }
@@ -843,6 +917,9 @@ struct NewTripView: View {
                         print("✅ Trip created successfully, showing route building view")
                         print("✅ tripId: \(tripId)")
                         print("✅ coordinate: \(coordinate.latitude), \(coordinate.longitude)")
+
+                        // Save trip ID for chat functionality
+                        self.currentTripId = tripId
 
                         // Create data object and show cover
                         self.routeBuildingData = RouteBuildingData(

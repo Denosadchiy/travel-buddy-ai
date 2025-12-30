@@ -93,14 +93,16 @@ class RouteTimeOptimizer:
         day_number: int,
         block_index: int,
         poi_plan_blocks: list[POIPlanBlock],
+        used_poi_ids: set[UUID],
     ) -> Optional[POICandidate]:
         """
-        Select the best POI candidate for a block.
+        Select the best POI candidate for a block, avoiding duplicates.
 
         Args:
             day_number: Day number
             block_index: Block index within the day
             poi_plan_blocks: List of all POI plan blocks
+            used_poi_ids: Set of POI IDs already selected (for deduplication)
 
         Returns:
             Selected POICandidate or None if not found
@@ -115,8 +117,35 @@ class RouteTimeOptimizer:
         if not matching_block or not matching_block.candidates:
             return None
 
-        # Select top-ranked candidate (first in list, already sorted by rank_score)
-        return matching_block.candidates[0]
+        # CRITICAL: Select first candidate that hasn't been used yet
+        # This prevents duplicate POIs in the final itinerary
+
+        # Debug logging
+        candidate_info = [(c.name, str(c.poi_id)[:8]) for c in matching_block.candidates[:5]]
+        logger.info(
+            f"Day {day_number}, Block {block_index}: "
+            f"Selecting from {len(matching_block.candidates)} candidates: {candidate_info}"
+        )
+        logger.info(f"Already used POIs: {len(used_poi_ids)} unique IDs")
+
+        for candidate in matching_block.candidates:
+            if candidate.poi_id not in used_poi_ids:
+                used_poi_ids.add(candidate.poi_id)  # Mark as used
+                logger.info(
+                    f"✓ Selected: {candidate.name} (ID: {str(candidate.poi_id)[:8]}...)"
+                )
+                return candidate
+            else:
+                logger.debug(
+                    f"✗ Skipped duplicate: {candidate.name} (ID: {str(candidate.poi_id)[:8]}...)"
+                )
+
+        # If all candidates are duplicates, log warning and skip
+        logger.warning(
+            f"❌ All {len(matching_block.candidates)} POI candidates for day {day_number}, "
+            f"block {block_index} are already used. Leaving block without POI."
+        )
+        return None
 
     def _is_block_reorderable(self, block_type: BlockType) -> bool:
         """Check if a block type can be reordered for route optimization."""
@@ -350,6 +379,9 @@ class RouteTimeOptimizer:
         # 4. Generate itinerary days
         itinerary_days = []
 
+        # CRITICAL: Track POIs used across entire trip to prevent duplicates
+        trip_used_poi_ids: set[UUID] = set()
+
         for day_skeleton in macro_plan.days:
             # Phase 1: Build BlockWithPOI objects for all blocks
             blocks_with_poi: list[BlockWithPOI] = []
@@ -361,6 +393,7 @@ class RouteTimeOptimizer:
                         day_skeleton.day_number,
                         block_index,
                         poi_plan_blocks,
+                        trip_used_poi_ids,  # Pass trip-level deduplication tracking
                     )
 
                 is_reorderable = self._is_block_reorderable(skeleton_block.block_type)

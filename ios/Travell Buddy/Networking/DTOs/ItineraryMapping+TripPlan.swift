@@ -133,22 +133,34 @@ extension ItineraryBlockDTO {
     }
 
     private func mapBlockTypeToCategory(_ blockType: String) -> TripActivityCategory {
+        // PRIORITY 1: Check POI category FIRST (more specific than block type)
+        if let poi = poi, let poiCategory = poi.category?.lowercased() {
+            // Museum & Art
+            if poiCategory.contains("museum") || poiCategory.contains("art") || poiCategory.contains("gallery") {
+                return .museum
+            }
+            // Viewpoints & Nature
+            if poiCategory.contains("viewpoint") || poiCategory.contains("view") || poiCategory.contains("park") || poiCategory.contains("garden") {
+                return .viewpoint
+            }
+            // Nightlife
+            if poiCategory.contains("bar") || poiCategory.contains("club") || poiCategory.contains("nightlife") {
+                return .nightlife
+            }
+            // Food establishments
+            if poiCategory.contains("restaurant") || poiCategory.contains("cafe") || poiCategory.contains("food") {
+                return .food
+            }
+        }
+
+        // PRIORITY 2: Fall back to block type if POI category doesn't match
         switch blockType.lowercased() {
         case "meal":
             return .food
-        case "activity":
-            // Check if it's a museum or viewpoint based on POI category
-            if let poi = poi, let category = poi.category?.lowercased() {
-                if category.contains("museum") || category.contains("art") {
-                    return .museum
-                }
-                if category.contains("viewpoint") || category.contains("view") {
-                    return .viewpoint
-                }
-            }
-            return .walk
         case "nightlife":
             return .nightlife
+        case "activity":
+            return .walk  // Generic activity
         case "rest":
             return .other
         default:

@@ -58,8 +58,9 @@ class POIPlanner:
 
     # Number of candidates to fetch from provider (before LLM selection)
     # When LLM is enabled, we fetch more candidates for LLM to choose from
-    CANDIDATES_PER_BLOCK = 3
-    CANDIDATES_FOR_LLM_SELECTION = 10
+    # IMPORTANT: Keep MORE candidates to ensure diversity after deduplication filtering
+    CANDIDATES_PER_BLOCK = 5  # Increased from 3 to provide more options after filtering duplicates
+    CANDIDATES_FOR_LLM_SELECTION = 15  # Increased from 10 for better LLM selection
 
     def __init__(
         self,
@@ -221,6 +222,9 @@ class POIPlanner:
         # 7. Generate POI candidates for each block
         poi_blocks = []
 
+        # CRITICAL: Track POIs selected across ALL days to prevent duplicates in multi-day trips
+        trip_selected_poi_ids = []
+
         for day in macro_plan.days:
             # Track POIs already selected for this day (for LLM deduplication)
             day_selected_poi_ids = []
@@ -236,11 +240,14 @@ class POIPlanner:
                 poi_block_count_in_day += 1
 
                 # Determine how many candidates to fetch
-                fetch_limit = (
+                # Fetch MORE than needed to account for deduplication filtering
+                base_limit = (
                     self.CANDIDATES_FOR_LLM_SELECTION
                     if self.use_llm_selection
                     else self.CANDIDATES_PER_BLOCK
                 )
+                # Multiply by 2 to ensure we have enough candidates after filtering duplicates
+                fetch_limit = base_limit * 2
 
                 # Search for POI candidates with radius and block type filtering
                 candidates = await self.poi_provider.search_pois(
@@ -266,6 +273,20 @@ class POIPlanner:
                         hotel_lon=trip_spec.hotel_lon,
                         distance_weight=hotel_anchor_weight,
                     )
+
+                # CRITICAL: Filter out POIs already used in previous days/blocks
+                # This prevents the same museum/restaurant from appearing multiple times in the trip
+                original_count = len(candidates)
+                filtered_out = [c for c in candidates if c.poi_id in trip_selected_poi_ids]
+                candidates = [c for c in candidates if c.poi_id not in trip_selected_poi_ids]
+
+                if original_count > len(candidates):
+                    filtered_names = [c.name for c in filtered_out[:3]]
+                    logger.info(
+                        f"Day {day.day_number}, Block {block_index}: "
+                        f"Filtered {original_count - len(candidates)} duplicate POIs: {filtered_names}"
+                    )
+                    logger.info(f"Trip has {len(trip_selected_poi_ids)} unique POIs selected so far")
 
                 # Select final candidates
                 if self.use_llm_selection and candidates:
@@ -293,16 +314,18 @@ class POIPlanner:
                         max_results=self.CANDIDATES_PER_BLOCK,
                     )
 
-                    # Track selected POIs for day-level deduplication
+                    # Track selected POIs for both day-level AND trip-level deduplication
                     for c in selected_candidates:
                         day_selected_poi_ids.append(c.poi_id)
+                        trip_selected_poi_ids.append(c.poi_id)
 
                     candidates = selected_candidates
                 else:
                     # Deterministic mode: use candidates as-is (already sorted by rank_score)
-                    # Also track for consistency if we mix modes
+                    # Track for both day-level AND trip-level deduplication
                     for c in candidates[:self.CANDIDATES_PER_BLOCK]:
                         day_selected_poi_ids.append(c.poi_id)
+                        trip_selected_poi_ids.append(c.poi_id)
                     candidates = candidates[:self.CANDIDATES_PER_BLOCK]
 
                 # Create POIPlanBlock

@@ -21,7 +21,7 @@ from src.infrastructure.models import POIModel
 logger = logging.getLogger(__name__)
 
 # Default maximum radius from city center (km)
-DEFAULT_MAX_RADIUS_KM = 20.0
+DEFAULT_MAX_RADIUS_KM = 15.0  # Strict 15km radius to exclude places outside the city
 
 
 def haversine_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -330,7 +330,10 @@ class DBPOIProvider(POIProvider):
                     city_center_lat, city_center_lon, poi.lat, poi.lon
                 )
                 if distance_km > max_radius_km:
-                    logger.debug(f"Excluding POI '{poi.name}' - {distance_km:.1f}km from city center")
+                    logger.info(
+                        f"⊘ Excluded POI '{poi.name}' - {distance_km:.1f}km from city center "
+                        f"(max: {max_radius_km}km) - Location: {poi.location[:50]}"
+                    )
                     continue
 
             # BlockType filtering: skip POIs that don't match the block type
@@ -639,7 +642,10 @@ class GooglePlacesPOIProvider(POIProvider):
                     city_center_lat, city_center_lon, place.lat, place.lon
                 )
                 if distance_km > max_radius_km:
-                    logger.debug(f"Excluding Google Place '{place.name}' - {distance_km:.1f}km from city center")
+                    logger.info(
+                        f"⊘ Excluded Google Place '{place.name}' - {distance_km:.1f}km from city center "
+                        f"(max: {max_radius_km}km) - Address: {place.formatted_address[:50]}"
+                    )
                     continue
 
             # Map to category

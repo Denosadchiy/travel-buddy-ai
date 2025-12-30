@@ -18,11 +18,56 @@ from src.infrastructure.geocoding import get_geocoding_service
 logger = logging.getLogger(__name__)
 
 
+# Category translation mapping: Russian → English
+# This ensures the LLM (trained primarily on English) understands user interests
+CATEGORY_TRANSLATION_MAP = {
+    "Гастрономия": "gastronomy",
+    "История и музеи": "history and museums",
+    "Ночная жизнь": "nightlife",
+    "Природа и виды": "nature and views",
+    "Шопинг": "shopping",
+    "Кофейни и десерты": "cafes and desserts",
+    "Современное искусство": "modern art",
+    "Архитектура и районы": "architecture and districts",
+    "Архитектура": "architecture",  # Short version without "и районы"
+    "Пляж / вода": "beach and water",
+    "Пляж/вода": "beach and water",  # Variant without spaces
+    "Активности и спорт": "activities and sports",
+}
+
+
 class TripSpecCollector:
     """
     Service for creating and updating trip specifications from form inputs.
     This collector manages TripSpec data and persists it to the database.
     """
+
+    @staticmethod
+    def _translate_interests(interests: list[str]) -> list[str]:
+        """
+        Translate interest categories from Russian to English.
+
+        This ensures the LLM (trained primarily on English) can properly
+        understand and use the user's selected interests when generating
+        itineraries and selecting POIs.
+
+        Args:
+            interests: List of interest categories (may be in Russian or English)
+
+        Returns:
+            List of translated interest categories in English
+        """
+        translated = []
+        for interest in interests:
+            # If already in English (not in map), keep as is
+            # Otherwise, translate from Russian to English
+            translated_interest = CATEGORY_TRANSLATION_MAP.get(interest, interest)
+            translated.append(translated_interest)
+
+            if interest in CATEGORY_TRANSLATION_MAP:
+                logger.info(f"Translated interest '{interest}' → '{translated_interest}'")
+
+        return translated
 
     @staticmethod
     def _daily_routine_to_dict(routine: DailyRoutine) -> dict:
@@ -143,6 +188,9 @@ class TripSpecCollector:
             except Exception as e:
                 logger.error(f"Error geocoding hotel '{request.hotel_location}': {e}")
 
+        # Translate interests from Russian to English for LLM understanding
+        translated_interests = self._translate_interests(request.interests) if request.interests else []
+
         # Create TripModel (ORM)
         trip_model = TripModel(
             city=request.city,
@@ -153,7 +201,7 @@ class TripSpecCollector:
             num_travelers=request.num_travelers,
             pace=request.pace,
             budget=request.budget,
-            interests=request.interests,
+            interests=translated_interests,
             daily_routine=self._daily_routine_to_dict(daily_routine),
             hotel_location=request.hotel_location,
             hotel_lat=hotel_lat,
@@ -248,7 +296,8 @@ class TripSpecCollector:
         if request.budget is not None:
             trip_model.budget = request.budget
         if request.interests is not None:
-            trip_model.interests = request.interests
+            # Translate interests from Russian to English for LLM understanding
+            trip_model.interests = self._translate_interests(request.interests)
         if request.hotel_location is not None:
             trip_model.hotel_location = request.hotel_location
             # Re-geocode hotel when it changes
