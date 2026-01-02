@@ -89,19 +89,71 @@ Rules:
         self,
         trip_id: UUID,
         db: AsyncSession,
+        include_trace: bool = True,
+        enable_extended_trace: bool = False,
     ) -> ItineraryResponse:
         """
         Generate draft itinerary with p95 < 20 seconds guarantee.
 
         Uses LLM with timeout, falls back to template on failure.
         Then fetches REAL POIs from database.
+
+        Args:
+            trip_id: UUID of the trip
+            db: Database session
+            include_trace: Include basic trace information
+            enable_extended_trace: Include extended debug trace (generator params, provider calls, ranking)
         """
         # 1. Load trip spec
         trip_spec = await self.trip_spec_collector.get_trip(trip_id, db)
         if not trip_spec:
             raise ValueError(f"Trip {trip_id} not found")
 
-        # 2. Try LLM generation with timeout
+        # 2. Initialize route trace if requested
+        from src.domain.route_trace import RouteTrace, GeneratorInputParams
+        route_trace = None
+
+        if include_trace:
+            num_days = (trip_spec.end_date - trip_spec.start_date).days + 1
+
+            route_trace = RouteTrace(
+                trip_id=trip_id,
+                city=trip_spec.city,
+                total_days=num_days,
+                pace=trip_spec.pace.value,
+                budget=trip_spec.budget.value,
+                interests=trip_spec.interests,
+            )
+
+            # Add extended trace with generator input params
+            if enable_extended_trace:
+                route_trace.generator_input = GeneratorInputParams(
+                    trip_id=trip_id,
+                    city_name=trip_spec.city,
+                    city_center_lat=trip_spec.city_center_lat,
+                    city_center_lon=trip_spec.city_center_lon,
+                    start_date=trip_spec.start_date,
+                    end_date=trip_spec.end_date,
+                    total_days=num_days,
+                    pace=trip_spec.pace.value,
+                    budget=trip_spec.budget.value,
+                    interests=trip_spec.interests,
+                    num_travelers=trip_spec.num_travelers,
+                    wake_time=trip_spec.daily_routine.wake_time,
+                    sleep_time=trip_spec.daily_routine.sleep_time,
+                    breakfast_window=(trip_spec.daily_routine.breakfast_window[0], trip_spec.daily_routine.breakfast_window[1]),
+                    lunch_window=(trip_spec.daily_routine.lunch_window[0], trip_spec.daily_routine.lunch_window[1]),
+                    dinner_window=(trip_spec.daily_routine.dinner_window[0], trip_spec.daily_routine.dinner_window[1]),
+                    max_radius_km=20.0,  # Using default from poi_providers
+                    poi_fetch_limit=5,  # Using limit from _fetch_best_poi
+                    min_rating=None,
+                    providers_enabled=["database"],  # Fast draft only uses DB
+                    category_match_weight=10.0,
+                    tag_overlap_weight=2.0,
+                    budget_alignment_bonus=5.0,
+                )
+
+        # 3. Try LLM generation with timeout
         try:
             skeletons = await asyncio.wait_for(
                 self._generate_with_llm(trip_spec),
@@ -117,16 +169,18 @@ Rules:
             skeletons = self._generate_from_template(trip_spec)
             source = "template"
 
-        # 3. Initialize POI provider
+        # No need to set skeleton_generation_method - it's set via generation_method in RouteTrace init
+
+        # 4. Initialize POI provider
         if not self.poi_provider:
             self.poi_provider = get_poi_provider(db)
 
-        # 4. Fetch REAL POIs for each block and convert to itinerary days
+        # 5. Fetch REAL POIs for each block and convert to itinerary days
         days = await self._convert_to_itinerary_with_real_pois(
-            skeletons, trip_spec, db
+            skeletons, trip_spec, db, route_trace, enable_extended_trace
         )
 
-        # 5. Store in database
+        # 6. Store in database
         created_at = datetime.utcnow()
         await self._store_draft(trip_id, skeletons, days, db, created_at)
 
@@ -136,6 +190,7 @@ Rules:
             trip_id=trip_id,
             days=days,
             created_at=created_at.isoformat() + "Z",
+            route_trace=route_trace,
         )
 
     async def _generate_with_llm(self, trip_spec) -> list[DaySkeleton]:
@@ -392,6 +447,8 @@ Generate JSON skeleton with desired_categories for each block."""
         skeletons: list[DaySkeleton],
         trip_spec,
         db: AsyncSession,
+        route_trace=None,
+        enable_extended_trace: bool = False,
     ) -> list[ItineraryDay]:
         """Convert skeletons to itinerary days with REAL POIs from database."""
         days = []
@@ -400,19 +457,29 @@ Generate JSON skeleton with desired_categories for each block."""
         for skeleton in skeletons:
             blocks = []
 
-            for skel_block in skeleton.blocks:
+            for block_index, skel_block in enumerate(skeleton.blocks):
                 poi = None
+                block_trace = None
 
                 # Fetch real POI for blocks that need them
                 if skel_block.block_type in BLOCK_TYPES_NEEDING_POIS:
-                    poi = await self._fetch_best_poi(
+                    poi, block_trace = await self._fetch_best_poi_with_trace(
                         city=trip_spec.city,
                         categories=skel_block.desired_categories,
                         budget=trip_spec.budget,
                         used_poi_ids=used_poi_ids,
+                        enable_extended_trace=enable_extended_trace,
+                        block_type=skel_block.block_type.value,
+                        theme=skel_block.theme,
+                        day_number=skeleton.day_number,
+                        block_index=block_index,
                     )
                     if poi:
                         used_poi_ids.add(poi.poi_id)
+
+                    # Add block trace if tracing is enabled
+                    if route_trace and block_trace:
+                        route_trace.block_traces.append(block_trace)
 
                 blocks.append(ItineraryBlock(
                     block_type=skel_block.block_type,
@@ -434,18 +501,36 @@ Generate JSON skeleton with desired_categories for each block."""
 
         return days
 
-    async def _fetch_best_poi(
+    async def _fetch_best_poi_with_trace(
         self,
         city: str,
         categories: list[str],
         budget: BudgetLevel,
         used_poi_ids: set,
-    ) -> Optional[POICandidate]:
-        """Fetch the best available POI from database."""
+        enable_extended_trace: bool,
+        block_type: str,
+        theme: str,
+        day_number: int,
+        block_index: int,
+    ):
+        """Fetch the best available POI from database with optional trace."""
+        from src.domain.route_trace import (
+            BlockSelectionTrace, ProviderCallTrace, CandidatePOISample,
+            FilterRuleTrace, POIFilteredOut, RankingTrace, POIScoringBreakdown,
+            SelectionAlternative, FilterReason
+        )
+        import time as time_module
+
+        poi = None
+        block_trace = None
+
         if not self.poi_provider:
-            return None
+            return None, None
 
         try:
+            # Measure provider call latency
+            start_time = time_module.time()
+
             # Get candidates
             candidates = await self.poi_provider.search_pois(
                 city=city,
@@ -454,17 +539,179 @@ Generate JSON skeleton with desired_categories for each block."""
                 limit=5,  # Get a few to have options
             )
 
-            # Return first unused candidate
+            latency_ms = (time_module.time() - start_time) * 1000
+
+            # Create trace if extended trace is enabled
+            if enable_extended_trace:
+                # Provider call trace
+                provider_calls = [ProviderCallTrace(
+                    provider_name="database",
+                    request_params={
+                        "city": city,
+                        "categories": categories,
+                        "budget": budget.value,
+                        "limit": 5,
+                    },
+                    candidates_returned=len(candidates),
+                    latency_ms=round(latency_ms, 2),
+                    status="success",
+                    error_message=None,
+                    sample_candidates=[
+                        CandidatePOISample(
+                            poi_id=c.poi_id,
+                            poi_name=c.name,
+                            category=c.category,
+                            tags=c.tags or [],
+                            rating=c.rating,
+                            lat=c.lat,
+                            lon=c.lon,
+                        )
+                        for c in candidates[:5]  # Limit to 5 samples
+                    ],
+                )]
+
+                # Filter rules trace (candidates already used)
+                filtered_out = []
+                for candidate in candidates:
+                    if candidate.poi_id in used_poi_ids:
+                        filtered_out.append(POIFilteredOut(
+                            poi_id=candidate.poi_id,
+                            poi_name=candidate.name,
+                            reason=FilterReason.ALREADY_USED,
+                            details="POI already used in itinerary",
+                        ))
+
+                filter_rules = []
+                if filtered_out:
+                    filter_rules.append(FilterRuleTrace(
+                        rule_name="already_used",
+                        dropped_count=len(filtered_out),
+                        examples_dropped=filtered_out[:5],  # Limit to 5 examples
+                    ))
+
+                # Ranking trace (simplified - we don't have actual scores in fast draft)
+                available_candidates = [c for c in candidates if c.poi_id not in used_poi_ids]
+                if not available_candidates and candidates:
+                    available_candidates = candidates  # Fall back to all if all used
+
+                ranking_trace = None
+                if available_candidates:
+                    from src.domain.route_trace import ScoringFactor
+
+                    ranking_trace = RankingTrace(
+                        total_candidates=len(available_candidates),
+                        top_candidates=[
+                            POIScoringBreakdown(
+                                poi_id=c.poi_id,
+                                poi_name=c.name,
+                                total_score=c.rating or 0.0,  # Use rating as score
+                                factors={
+                                    ScoringFactor.CATEGORY_MATCH: 5.0 if categories and c.category in categories else 0.0,
+                                    ScoringFactor.RATING: c.rating or 0.0,
+                                },
+                                explanation=f"Rating: {c.rating or 0.0}" + (f", matches category '{c.category}'" if c.category in categories else "")
+                            )
+                            for c in available_candidates[:5]  # Top 5
+                        ],
+                        avg_score=sum(c.rating or 0.0 for c in available_candidates) / len(available_candidates) if available_candidates else None,
+                        max_score=max((c.rating or 0.0) for c in available_candidates) if available_candidates else None,
+                        min_score=min((c.rating or 0.0) for c in available_candidates) if available_candidates else None,
+                    )
+
+                # Selection alternatives
+                selection_alternatives = []
+                if len(available_candidates) > 1:
+                    for i, candidate in enumerate(available_candidates[1:4], start=2):  # Next 3
+                        selection_alternatives.append(SelectionAlternative(
+                            poi_id=candidate.poi_id,
+                            poi_name=candidate.name,
+                            rank=i,
+                            score=candidate.rating or 0.0,
+                            reason_not_selected=f"Selected higher-ranked POI" if i == 2 else None,
+                        ))
+
+            # Select first unused candidate
             for candidate in candidates:
                 if candidate.poi_id not in used_poi_ids:
-                    return candidate
+                    poi = candidate
+                    break
 
             # If all are used, return the first one anyway
-            return candidates[0] if candidates else None
+            if not poi and candidates:
+                poi = candidates[0]
+
+            # Create block trace
+            if enable_extended_trace:
+                block_trace = BlockSelectionTrace(
+                    day_number=day_number,
+                    block_index=block_index,
+                    block_type=block_type,
+                    block_theme=theme,
+                    desired_categories=categories,
+                    selected_poi_id=poi.poi_id if poi else None,
+                    selected_poi_name=poi.name if poi else None,
+                    provider_calls=provider_calls,
+                    filter_rules_applied=filter_rules,
+                    ranking_trace=ranking_trace,
+                    selection_alternatives=selection_alternatives,
+                )
+
+            return poi, block_trace
 
         except Exception as e:
             print(f"⚠️ POI fetch error: {e}")
-            return None
+
+            # Create error trace if extended trace is enabled
+            if enable_extended_trace:
+                block_trace = BlockSelectionTrace(
+                    day_number=day_number,
+                    block_index=block_index,
+                    block_type=block_type,
+                    block_theme=theme,
+                    desired_categories=categories,
+                    selected_poi_id=None,
+                    selected_poi_name=None,
+                    provider_calls=[ProviderCallTrace(
+                        provider_name="database",
+                        request_params={
+                            "city": city,
+                            "categories": categories,
+                            "budget": budget.value,
+                            "limit": 5,
+                        },
+                        candidates_returned=0,
+                        latency_ms=None,
+                        status="error",
+                        error_message=str(e),
+                        sample_candidates=[],
+                    )],
+                    filter_rules_applied=[],
+                    ranking_trace=None,
+                    selection_alternatives=[],
+                )
+
+            return None, block_trace
+
+    async def _fetch_best_poi(
+        self,
+        city: str,
+        categories: list[str],
+        budget: BudgetLevel,
+        used_poi_ids: set,
+    ) -> Optional[POICandidate]:
+        """Fetch the best available POI from database (legacy method)."""
+        poi, _ = await self._fetch_best_poi_with_trace(
+            city=city,
+            categories=categories,
+            budget=budget,
+            used_poi_ids=used_poi_ids,
+            enable_extended_trace=False,
+            block_type="activity",
+            theme="",
+            day_number=1,
+            block_index=0,
+        )
+        return poi
 
     async def _store_draft(
         self,
