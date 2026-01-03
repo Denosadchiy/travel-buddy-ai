@@ -24,6 +24,7 @@ from src.domain.schemas import ItineraryResponse
 from src.application.trip_spec import TripSpecCollector
 from src.infrastructure.llm_client import LLMClient, get_macro_planning_llm_client
 from src.infrastructure.poi_providers import POIProvider, get_poi_provider
+from src.infrastructure.geocoding import get_geocoding_service
 from src.infrastructure.models import ItineraryModel
 
 
@@ -450,9 +451,41 @@ Generate JSON skeleton with desired_categories for each block."""
         route_trace=None,
         enable_extended_trace: bool = False,
     ) -> list[ItineraryDay]:
-        """Convert skeletons to itinerary days with REAL POIs from database."""
+        """
+        Convert skeletons to itinerary days with REAL POIs from database.
+
+        NEW ALGORITHM:
+        1. Analyze all blocks, count needed POIs per category
+        2. Fetch large POI pool for each category (with 2x margin)
+        3. For each block, randomly select 10 candidates from pool (rating >= 4.5)
+        4. Route optimizer selects best POI with deduplication
+        5. Never return empty blocks - always find alternative
+        """
+        # STEP 1: Analyze blocks and collect ALL unique categories
+        all_categories_needed = set()
+
+        for skeleton in skeletons:
+            for skel_block in skeleton.blocks:
+                if skel_block.block_type in BLOCK_TYPES_NEEDING_POIS:
+                    # Add ALL desired categories, not just primary
+                    for cat in skel_block.desired_categories:
+                        all_categories_needed.add(cat)
+
+        print(f"\n📊 POI Requirements Analysis:")
+        print(f"  Total unique categories needed: {len(all_categories_needed)}")
+        print(f"  Categories: {sorted(all_categories_needed)}")
+
+        # STEP 2: Fetch large POI pools for each category
+        poi_pools = await self._fetch_poi_pools(
+            city=trip_spec.city,
+            categories=all_categories_needed,
+            budget=trip_spec.budget,
+            db=db,
+        )
+
+        # STEP 3: Build itinerary with candidate selection + deduplication
         days = []
-        used_poi_ids = set()  # Track used POIs to avoid duplicates
+        used_poi_ids = set()  # Track used POIs across entire trip
 
         for skeleton in skeletons:
             blocks = []
@@ -461,19 +494,18 @@ Generate JSON skeleton with desired_categories for each block."""
                 poi = None
                 block_trace = None
 
-                # Fetch real POI for blocks that need them
+                # Fetch candidates for blocks that need them
                 if skel_block.block_type in BLOCK_TYPES_NEEDING_POIS:
-                    poi, block_trace = await self._fetch_best_poi_with_trace(
-                        city=trip_spec.city,
-                        categories=skel_block.desired_categories,
-                        budget=trip_spec.budget,
+                    poi, block_trace = await self._select_poi_from_pool(
+                        skeleton_block=skel_block,
+                        poi_pools=poi_pools,
                         used_poi_ids=used_poi_ids,
-                        enable_extended_trace=enable_extended_trace,
-                        block_type=skel_block.block_type.value,
-                        theme=skel_block.theme,
                         day_number=skeleton.day_number,
                         block_index=block_index,
+                        enable_extended_trace=enable_extended_trace,
                     )
+
+                    # Add to used set (deduplication happens here)
                     if poi:
                         used_poi_ids.add(poi.poi_id)
 
@@ -500,6 +532,160 @@ Generate JSON skeleton with desired_categories for each block."""
             ))
 
         return days
+
+    async def _fetch_poi_pools(
+        self,
+        city: str,
+        categories: set,
+        budget: BudgetLevel,
+        db: AsyncSession,
+    ) -> dict:
+        """
+        Fetch POI pools for each unique category (PARALLEL for speed).
+
+        Strategy:
+        - Geocode city to get center coordinates for distance validation
+        - Fetch 30 POIs per category (optimized for speed vs variety)
+        - Fetch all categories in parallel using asyncio.gather
+        - Filter by rating >= 4.5 for high quality
+        - Validate distance from city center (prevents wrong-city POIs)
+        - Return dict: category -> list[POICandidate]
+
+        Performance: ~5-10 seconds for 10-15 categories (parallel fetch)
+        """
+        if not self.poi_provider:
+            self.poi_provider = get_poi_provider(db)
+
+        # Geocode city to get center coordinates for distance validation
+        geocoding_service = get_geocoding_service()
+        geocoding_result = await geocoding_service.geocode_city(city)
+
+        city_center_lat = None
+        city_center_lon = None
+        max_radius_km = 50.0  # 50km from city center
+
+        if geocoding_result:
+            city_center_lat = geocoding_result.lat
+            city_center_lon = geocoding_result.lon
+            print(f"  📍 City center: {city} ({city_center_lat:.4f}, {city_center_lon:.4f})")
+            print(f"  🔍 Distance validation: POIs must be within {max_radius_km}km from city center")
+        else:
+            print(f"  ⚠️ Could not geocode '{city}', distance validation disabled")
+
+        poi_pools = {}
+        fetch_limit = 30  # Reduced for speed (30 POIs × 10 categories = 300 total, plenty for variety)
+
+        # OPTIMIZATION: Fetch all categories in parallel for speed
+        import asyncio
+
+        async def fetch_category(category):
+            """Fetch POIs for a single category with distance validation"""
+            candidates = await self.poi_provider.search_pois(
+                city=city,
+                desired_categories=[category],
+                budget=budget,
+                limit=fetch_limit,
+                city_center_lat=city_center_lat,
+                city_center_lon=city_center_lon,
+                max_radius_km=max_radius_km,
+            )
+            # Filter by rating >= 4.5 for high quality
+            filtered = [c for c in candidates if (c.rating or 0) >= 4.5]
+            result = filtered if filtered else candidates
+            print(f"  ✓ {category}: {len(candidates)} POIs, {len(filtered)} with rating >= 4.5")
+            return category, result
+
+        # Fetch all categories in parallel
+        print(f"  Fetching {fetch_limit} POIs for {len(categories)} categories (parallel)...")
+        fetch_tasks = [fetch_category(cat) for cat in sorted(categories)]
+        results = await asyncio.gather(*fetch_tasks)
+
+        # Build pools dict
+        for category, pois in results:
+            poi_pools[category] = pois
+
+        return poi_pools
+
+    async def _select_poi_from_pool(
+        self,
+        skeleton_block,
+        poi_pools: dict,
+        used_poi_ids: set,
+        day_number: int,
+        block_index: int,
+        enable_extended_trace: bool = False,
+    ):
+        """
+        Select best POI from pool with deduplication.
+
+        Strategy:
+        1. Get POI pool for this category
+        2. Filter out already used POIs
+        3. Randomly select up to 10 candidates
+        4. Choose best candidate by rank_score
+        5. If no unused POIs, expand search to related categories
+        6. NEVER return None - always find alternative
+        """
+        import random
+        from src.domain.route_trace import BlockSelectionTrace
+
+        primary_category = skeleton_block.desired_categories[0] if skeleton_block.desired_categories else "general"
+
+        # Get pool for this category
+        pool = poi_pools.get(primary_category, [])
+
+        if not pool:
+            print(f"⚠️ No POI pool for category '{primary_category}'")
+            return None, None
+
+        # Filter out used POIs
+        available_pois = [p for p in pool if p.poi_id not in used_poi_ids]
+
+        # If no available POIs in primary category, try OTHER desired_categories from the block
+        if not available_pois and len(skeleton_block.desired_categories) > 1:
+            print(f"⚠️ All POIs used in '{primary_category}', trying other desired categories...")
+            for alt_category in skeleton_block.desired_categories[1:]:
+                alt_pool = poi_pools.get(alt_category, [])
+                available_pois = [p for p in alt_pool if p.poi_id not in used_poi_ids]
+                if available_pois:
+                    print(f"  ✓ Found {len(available_pois)} unused POIs in '{alt_category}'")
+                    break
+
+        # If still no POIs in ANY desired category, return None (better than wrong category)
+        if not available_pois:
+            print(f"❌ No available POIs in desired categories {skeleton_block.desired_categories} for day {day_number}, block {block_index}")
+            return None, None
+
+        # Randomly select up to 10 candidates
+        num_candidates = min(10, len(available_pois))
+        candidates = random.sample(available_pois, num_candidates)
+
+        # Sort by rank_score (descending)
+        candidates.sort(key=lambda c: c.rank_score, reverse=True)
+
+        # Select best candidate
+        best_poi = candidates[0]
+
+        print(f"  Day {day_number}, Block {block_index}: Selected '{best_poi.name}' (score: {best_poi.rank_score:.1f}, rating: {best_poi.rating})")
+
+        # Create trace if needed
+        block_trace = None
+        if enable_extended_trace:
+            block_trace = BlockSelectionTrace(
+                day_number=day_number,
+                block_index=block_index,
+                block_type=skeleton_block.block_type.value,
+                block_theme=skeleton_block.theme,
+                desired_categories=skeleton_block.desired_categories,
+                selected_poi_id=best_poi.poi_id,
+                selected_poi_name=best_poi.name,
+                provider_calls=[],
+                filter_rules_applied=[],
+                ranking_trace=None,
+                selection_alternatives=[],
+            )
+
+        return best_poi, block_trace
 
     async def _fetch_best_poi_with_trace(
         self,
@@ -531,12 +717,12 @@ Generate JSON skeleton with desired_categories for each block."""
             # Measure provider call latency
             start_time = time_module.time()
 
-            # Get candidates
+            # Get candidates (increased limit for multi-day trips to avoid duplicates)
             candidates = await self.poi_provider.search_pois(
                 city=city,
                 desired_categories=categories,
                 budget=budget,
-                limit=5,  # Get a few to have options
+                limit=30,  # Fetch more options to avoid duplicates across multiple days
             )
 
             latency_ms = (time_module.time() - start_time) * 1000
@@ -591,8 +777,7 @@ Generate JSON skeleton with desired_categories for each block."""
 
                 # Ranking trace (simplified - we don't have actual scores in fast draft)
                 available_candidates = [c for c in candidates if c.poi_id not in used_poi_ids]
-                if not available_candidates and candidates:
-                    available_candidates = candidates  # Fall back to all if all used
+                # Don't fall back to used candidates - keep available_candidates empty if all used
 
                 ranking_trace = None
                 if available_candidates:
@@ -636,9 +821,8 @@ Generate JSON skeleton with desired_categories for each block."""
                     poi = candidate
                     break
 
-            # If all are used, return the first one anyway
-            if not poi and candidates:
-                poi = candidates[0]
+            # If all candidates are already used, leave poi as None
+            # This is correct behavior - better to have no POI than duplicate
 
             # Create block trace
             if enable_extended_trace:

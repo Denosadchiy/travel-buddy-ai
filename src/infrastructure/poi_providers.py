@@ -515,7 +515,13 @@ class GooglePlacesPOIProvider(POIProvider):
         city: str,
         desired_categories: list[str],
     ) -> POIModel:
-        """Cache a Google Place result to the database."""
+        """
+        Cache a Google Place result to the database.
+
+        Handles race conditions when multiple parallel fetches try to insert the same POI.
+        """
+        from sqlalchemy.exc import IntegrityError
+
         # Check if already exists
         result = await self.db.execute(
             select(POIModel).where(
@@ -556,7 +562,26 @@ class GooglePlacesPOIProvider(POIProvider):
                 price_level=place.price_level,
                 created_at=datetime.utcnow(),
             )
-            self.db.add(poi_model)
+
+            try:
+                self.db.add(poi_model)
+                await self.db.flush()  # Flush to catch IntegrityError before commit
+            except IntegrityError:
+                # Race condition: another parallel fetch already inserted this POI
+                # Rollback and fetch the existing record
+                await self.db.rollback()
+                result = await self.db.execute(
+                    select(POIModel).where(
+                        and_(
+                            POIModel.external_source == self.EXTERNAL_SOURCE,
+                            POIModel.external_id == place.place_id,
+                        )
+                    )
+                )
+                poi_model = result.scalars().first()
+                if not poi_model:
+                    # Should never happen, but just in case
+                    raise RuntimeError(f"POI {place.place_id} disappeared after IntegrityError")
 
         return poi_model
 
