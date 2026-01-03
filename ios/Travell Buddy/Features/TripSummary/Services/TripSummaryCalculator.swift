@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import CoreLocation
 
 final class TripSummaryCalculator {
 
@@ -13,6 +14,9 @@ final class TripSummaryCalculator {
 
     // Average step length in meters (global average)
     private static let averageStepLength: Double = 0.75
+
+    // Average walking speed in meters per minute (~5 km/h)
+    private static let averageWalkingSpeedMetersPerMin: Double = 80.0
 
     // Cost estimates per category per person (in EUR, as base currency)
     private static let mealCosts: CostRange = CostRange(low: 15, high: 40)
@@ -71,6 +75,9 @@ final class TripSummaryCalculator {
         let totalCostLow = daySummaries.reduce(0.0) { $0 + $1.estimatedCostLow }
         let totalCostHigh = daySummaries.reduce(0.0) { $0 + $1.estimatedCostHigh }
 
+        // Check if at least one day has distance data
+        let hasAnyDistanceData = daySummaries.contains { $0.hasDistanceData }
+
         let daysCount = max(plan.days.count, 1)
         let currency = currencyForCity(plan.destinationCity)
 
@@ -85,6 +92,7 @@ final class TripSummaryCalculator {
             totalDistanceMeters: totalDistance,
             totalEstimatedSteps: totalSteps,
             totalWalkingTimeMinutes: totalWalkingTime,
+            hasDistanceData: hasAnyDistanceData,
             totalActivities: totalActivities,
             totalMeals: totalMeals,
             totalAttractions: totalAttractions,
@@ -100,14 +108,14 @@ final class TripSummaryCalculator {
     static func calculateDaySummary(from day: TripDay, city: String, travelers: Int) -> DaySummary {
         let activities = day.activities
 
-        // Calculate distance from travel info
-        let totalDistance = activities.compactMap { $0.travelDistanceMeters }.reduce(0, +)
+        // Calculate distance using backend data or haversine fallback
+        let (totalDistance, hasDistanceData) = calculateDayDistance(activities: activities)
 
-        // Estimate steps from distance
-        let estimatedSteps = Int(Double(totalDistance) / averageStepLength)
+        // Estimate steps from distance (only if we have distance data)
+        let estimatedSteps = hasDistanceData ? Int(Double(totalDistance) / averageStepLength) : 0
 
-        // Calculate walking time
-        let totalWalkingTime = activities.compactMap { $0.travelTimeMinutes }.reduce(0, +)
+        // Calculate walking time using backend data or estimate from distance
+        let (totalWalkingTime, _) = calculateWalkingTime(activities: activities, distanceMeters: totalDistance)
 
         // Count activities by type
         let mealsCount = activities.filter { $0.category == .food }.count
@@ -148,6 +156,7 @@ final class TripSummaryCalculator {
             totalDistanceMeters: totalDistance,
             estimatedSteps: estimatedSteps,
             totalWalkingTimeMinutes: totalWalkingTime,
+            hasDistanceData: hasDistanceData,
             activitiesCount: activities.count,
             mealsCount: mealsCount,
             attractionsCount: attractionsCount,
@@ -179,6 +188,84 @@ final class TripSummaryCalculator {
 
         // Default to EUR
         return "EUR"
+    }
+
+    // MARK: - Distance Calculation
+
+    /// Calculates total distance for a day using backend data or haversine fallback.
+    /// Returns (totalDistanceMeters, hasRealData)
+    private static func calculateDayDistance(activities: [TripActivity]) -> (Int, Bool) {
+        // First, try to sum backend-provided distances
+        let backendDistances = activities.compactMap { $0.travelDistanceMeters }
+        let backendTotal = backendDistances.reduce(0, +)
+
+        // If we have backend data, use it
+        if backendTotal > 0 {
+            return (backendTotal, true)
+        }
+
+        // Fallback: calculate haversine distances between consecutive POIs
+        var haversineTotal: Double = 0
+        var hasAnyCoordinates = false
+
+        for i in 1..<activities.count {
+            let prev = activities[i - 1]
+            let curr = activities[i]
+
+            if let prevCoord = prev.coordinate, let currCoord = curr.coordinate {
+                hasAnyCoordinates = true
+                haversineTotal += haversineDistance(from: prevCoord, to: currCoord)
+            }
+        }
+
+        if hasAnyCoordinates {
+            return (Int(haversineTotal), true)
+        }
+
+        // No data available
+        return (0, false)
+    }
+
+    /// Calculates total walking time using backend data or estimate from distance.
+    /// Returns (totalMinutes, hasRealData)
+    private static func calculateWalkingTime(activities: [TripActivity], distanceMeters: Int) -> (Int, Bool) {
+        // First, try to sum backend-provided times
+        let backendTimes = activities.compactMap { $0.travelTimeMinutes }
+        let backendTotal = backendTimes.reduce(0, +)
+
+        // If we have backend data, use it
+        if backendTotal > 0 {
+            return (backendTotal, true)
+        }
+
+        // Fallback: estimate from distance (5 km/h average walking speed)
+        if distanceMeters > 0 {
+            let estimatedMinutes = Int(Double(distanceMeters) / averageWalkingSpeedMetersPerMin)
+            return (estimatedMinutes, true)
+        }
+
+        // No data available
+        return (0, false)
+    }
+
+    /// Calculates the haversine distance between two coordinates in meters.
+    private static func haversineDistance(
+        from coord1: CLLocationCoordinate2D,
+        to coord2: CLLocationCoordinate2D
+    ) -> Double {
+        let earthRadiusMeters: Double = 6_371_000
+
+        let lat1 = coord1.latitude * .pi / 180
+        let lat2 = coord2.latitude * .pi / 180
+        let deltaLat = (coord2.latitude - coord1.latitude) * .pi / 180
+        let deltaLon = (coord2.longitude - coord1.longitude) * .pi / 180
+
+        let a = sin(deltaLat / 2) * sin(deltaLat / 2) +
+                cos(lat1) * cos(lat2) *
+                sin(deltaLon / 2) * sin(deltaLon / 2)
+        let c = 2 * atan2(sqrt(a), sqrt(1 - a))
+
+        return earthRadiusMeters * c
     }
 }
 

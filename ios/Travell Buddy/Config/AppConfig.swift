@@ -16,7 +16,8 @@ enum APIEnvironment {
         switch self {
         case .development:
             // FastAPI dev server running locally
-            return URL(string: "http://localhost:8000/api")!
+            // Use Mac's local IP for iOS Simulator (127.0.0.1 doesn't work from simulator)
+            return URL(string: "http://192.168.0.110:8001/api")!
         case .staging:
             return URL(string: "https://staging-api.travelbuddy.com/api")!
         case .production:

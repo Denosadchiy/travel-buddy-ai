@@ -19,6 +19,7 @@ struct DaySummary: Identifiable {
     let totalDistanceMeters: Int
     let estimatedSteps: Int
     let totalWalkingTimeMinutes: Int
+    let hasDistanceData: Bool  // True if we have real distance data (backend or haversine)
 
     // Activity stats
     let activitiesCount: Int
@@ -46,6 +47,7 @@ struct DaySummary: Identifiable {
     }
 
     var formattedDistance: String {
+        guard hasDistanceData else { return "—" }
         if totalDistanceMeters >= 1000 {
             return String(format: "%.1f км", totalDistanceKm)
         }
@@ -53,6 +55,7 @@ struct DaySummary: Identifiable {
     }
 
     var formattedSteps: String {
+        guard hasDistanceData else { return "—" }
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         formatter.groupingSeparator = " "
@@ -60,6 +63,7 @@ struct DaySummary: Identifiable {
     }
 
     var formattedWalkingTime: String {
+        guard hasDistanceData else { return "—" }
         if totalWalkingTimeMinutes >= 60 {
             let hours = totalWalkingTimeMinutes / 60
             let minutes = totalWalkingTimeMinutes % 60
@@ -108,6 +112,7 @@ struct TripSummary {
     let totalDistanceMeters: Int
     let totalEstimatedSteps: Int
     let totalWalkingTimeMinutes: Int
+    let hasDistanceData: Bool  // True if at least one day has distance data
 
     // Aggregated activity stats
     let totalActivities: Int
@@ -130,10 +135,12 @@ struct TripSummary {
     }
 
     var formattedTotalDistance: String {
-        String(format: "%.1f км", totalDistanceKm)
+        guard hasDistanceData else { return "—" }
+        return String(format: "%.1f км", totalDistanceKm)
     }
 
     var formattedTotalSteps: String {
+        guard hasDistanceData else { return "—" }
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         formatter.groupingSeparator = " "
