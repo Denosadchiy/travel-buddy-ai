@@ -3,6 +3,7 @@ Macro Planner service.
 Generates high-level trip skeleton using LLM.
 """
 from uuid import UUID
+import asyncio
 from typing import Optional
 from datetime import datetime, timedelta
 import json
@@ -13,7 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.domain.models import DaySkeleton, SkeletonBlock
 from src.domain.schemas import MacroPlanResponse
 from src.application.trip_spec import TripSpecCollector
-from src.infrastructure.llm_client import LLMClient, get_macro_planning_llm_client
+from src.config import settings, Settings
+from src.infrastructure.llm_client import (
+    LLMClient,
+    get_macro_planning_llm_client,
+    get_trip_chat_llm_client,
+)
 from src.infrastructure.models import ItineraryModel
 
 
@@ -80,14 +86,25 @@ CRITICAL - Interest Categories:
 - DO NOT use generic categories like "sightseeing" or "tourist attraction"
 - NO explanations, NO markdown, ONLY valid JSON"""
 
-    def __init__(self, llm_client: Optional[LLMClient] = None):
+    def __init__(
+        self,
+        llm_client: Optional[LLMClient] = None,
+        app_settings: Optional[Settings] = None,
+    ):
         """
         Initialize Macro Planner.
 
         Args:
             llm_client: LLM client (defaults to macro planning client)
         """
-        self.llm_client = llm_client or get_macro_planning_llm_client()
+        self._settings = app_settings or settings
+        if llm_client is not None:
+            self.llm_client = llm_client
+        else:
+            if self._settings.enable_agentic_planning and self._settings.agentic_use_fast_macro_plan:
+                self.llm_client = get_trip_chat_llm_client(self._settings)
+            else:
+                self.llm_client = get_macro_planning_llm_client(self._settings)
         self.trip_spec_collector = TripSpecCollector()
 
     def _build_planning_prompt(self, trip_context: str) -> str:
@@ -219,34 +236,53 @@ Daily Routine:
         max_retries = 2
         last_error = None
 
-        for attempt in range(max_retries):
-            try:
-                # Use higher token limit for longer trips
-                num_days = (trip_spec.end_date - trip_spec.start_date).days + 1
-                token_limit = 4096 if num_days <= 3 else 8192
+        llm_response = None
+        fast_macro = self._settings.enable_agentic_planning and self._settings.agentic_use_fast_macro_plan
+        use_template = fast_macro and self._settings.agentic_use_template_macro_plan
 
-                llm_response = await self.llm_client.generate_structured(
-                    prompt=user_prompt,
-                    system_prompt=self.SYSTEM_PROMPT,
-                    max_tokens=token_limit,
-                )
-                break  # Success, exit retry loop
-            except Exception as e:
-                last_error = e
-                if attempt < max_retries - 1:
-                    # Log retry attempt
-                    print(f"LLM attempt {attempt + 1} failed, retrying: {e}")
-                    continue
-                raise ValueError(f"LLM failed to generate macro plan: {last_error}")
+        if use_template:
+            from src.application.fast_draft_planner import FastDraftPlanner
+            skeletons = FastDraftPlanner()._generate_from_template(trip_spec)
+        else:
+            for attempt in range(max_retries):
+                try:
+                    # Use lower token limits when fast macro planning is enabled
+                    num_days = (trip_spec.end_date - trip_spec.start_date).days + 1
+                    if fast_macro:
+                        token_limit = 1024 if num_days <= 7 else 1536
+                    else:
+                        token_limit = 4096 if num_days <= 3 else 8192
 
-        # 4. Parse into DaySkeleton objects
-        try:
-            skeletons = self._parse_skeleton_response(llm_response)
-        except Exception as e:
-            raise ValueError(f"Failed to parse LLM response into skeletons: {e}")
+                    llm_call = self.llm_client.generate_structured(
+                        prompt=user_prompt,
+                        system_prompt=self.SYSTEM_PROMPT,
+                        max_tokens=token_limit,
+                    )
+                    if fast_macro:
+                        llm_response = await asyncio.wait_for(llm_call, timeout=12)
+                    else:
+                        llm_response = await llm_call
+                    break  # Success, exit retry loop
+                except Exception as e:
+                    last_error = e
+                    if attempt < max_retries - 1:
+                        # Log retry attempt
+                        print(f"LLM attempt {attempt + 1} failed, retrying: {e}")
+                        continue
+                    llm_response = None
 
-        if not skeletons:
-            raise ValueError("LLM returned empty skeleton list")
+            # 4. Parse into DaySkeleton objects
+            skeletons = []
+            if llm_response:
+                try:
+                    skeletons = self._parse_skeleton_response(llm_response)
+                except Exception as e:
+                    print(f"Failed to parse LLM response into skeletons, using template: {e}")
+                    skeletons = []
+
+            if not skeletons:
+                from src.application.fast_draft_planner import FastDraftPlanner
+                skeletons = FastDraftPlanner()._generate_from_template(trip_spec)
 
         # 5. Store in database
         created_at = datetime.utcnow()

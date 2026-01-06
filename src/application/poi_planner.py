@@ -10,8 +10,12 @@ The LLM mode is enabled via USE_LLM_FOR_POI_SELECTION config flag.
 When enabled, the LLM can ONLY choose from deterministically-filtered candidates.
 """
 import logging
+import asyncio
+import time
 from uuid import UUID
 from typing import Optional
+from dataclasses import dataclass, field
+from collections import Counter, defaultdict
 from datetime import datetime
 
 from sqlalchemy import select
@@ -36,6 +40,10 @@ from src.application.poi_agent import (
     filter_candidates_for_block,
 )
 from src.infrastructure.poi_providers import POIProvider, get_poi_provider, haversine_distance_km
+from src.infrastructure.llm_client import (
+    get_curator_llm_client,
+    get_poi_selection_llm_client,
+)
 from src.infrastructure.models import ItineraryModel
 from src.domain.models import POICandidate
 
@@ -632,4 +640,861 @@ class POIPlanner:
             blocks=poi_blocks,
             created_at=itinerary_model.poi_plan_created_at.isoformat() + "Z"
             if itinerary_model.poi_plan_created_at else datetime.utcnow().isoformat() + "Z",
+        )
+
+
+@dataclass
+class SearchDirective:
+    """LLM-guided search directive for POI curation."""
+    category: str
+    keywords: list[str] = field(default_factory=list)
+    min_count: int = 0
+    priority: str = "normal"  # "must", "high", "normal"
+    block_type: BlockType = BlockType.ACTIVITY
+
+
+@dataclass
+class CuratedPOIBank:
+    """Curated POI bank produced by POI Curator agent."""
+    candidates: list[POICandidate]
+    candidates_by_category: dict[str, list[POICandidate]]
+    llm_scores: dict[UUID, float]
+    directives: list[SearchDirective]
+    clustering_result: Optional["ClusteringResult"]
+    must_visit_ids: list[UUID]
+    nice_to_have_ids: list[UUID]
+    curator_notes: Optional[str] = None
+
+
+class POICuratorAgent:
+    """
+    Agentic POI Curator.
+    Uses LLM to generate search directives, fetches POIs via providers,
+    and optionally assigns LLM-based relevance scores.
+    """
+    VALID_CATEGORIES = {
+        "restaurant",
+        "cafe",
+        "bar",
+        "bakery",
+        "food",
+        "museum",
+        "attraction",
+        "park",
+        "shopping",
+        "wellness",
+        "nightlife",
+    }
+    CATEGORY_ALIASES = [
+        ("fine dining", "restaurant"),
+        ("seafood", "restaurant"),
+        ("tapas", "restaurant"),
+        ("cuisine", "restaurant"),
+        ("restaurant", "restaurant"),
+        ("cafe", "cafe"),
+        ("coffee", "cafe"),
+        ("bakery", "bakery"),
+        ("breakfast", "cafe"),
+        ("bar", "bar"),
+        ("pub", "bar"),
+        ("brewery", "bar"),
+        ("nightclub", "nightlife"),
+        ("club", "nightlife"),
+        ("live music", "nightlife"),
+        ("nightlife", "nightlife"),
+        ("museum", "museum"),
+        ("gallery", "museum"),
+        ("art", "museum"),
+        ("history", "attraction"),
+        ("historical", "attraction"),
+        ("architecture", "attraction"),
+        ("landmark", "attraction"),
+        ("monument", "attraction"),
+        ("sightseeing", "attraction"),
+        ("attraction", "attraction"),
+        ("park", "park"),
+        ("nature", "park"),
+        ("viewpoint", "park"),
+        ("garden", "park"),
+        ("shopping", "shopping"),
+        ("market", "shopping"),
+        ("boutique", "shopping"),
+        ("spa", "wellness"),
+        ("wellness", "wellness"),
+        ("gym", "wellness"),
+    ]
+
+    SEARCH_SYSTEM_PROMPT = """You are a POI curator. Generate search directives for finding places in a city.
+Return ONLY JSON with the schema:
+{
+  "directives": [
+    {
+      "category": "restaurant",
+      "keywords": ["craft beer", "local"],
+      "min_count": 20,
+      "priority": "must|high|normal"
+    }
+  ]
+}
+Rules:
+- Use categories from the provided list.
+- Keep keywords short (<= 4 per directive).
+- min_count must be an integer >= 10.
+"""
+
+    SCORE_SYSTEM_PROMPT = """You are a POI curator. Score candidates for this trip.
+Return ONLY JSON:
+{
+  "scores": [
+    {"candidate_id": "uuid", "score": 0-100, "reason": "short"}
+    ]
+}
+Rules:
+- Use only provided candidate_id values.
+- Score higher when a place strongly matches preferences or must-include keywords.
+"""
+
+    PRIORITIZE_SYSTEM_PROMPT = """You are a POI curator. Identify must-visit and nice-to-have places.
+Return ONLY JSON:
+{
+  "must_visit_ids": ["uuid"],
+  "nice_to_have_ids": ["uuid"],
+  "notes": "short"
+}
+Rules:
+- Use only provided candidate_id values.
+- must_visit_ids should be <= 10, nice_to_have_ids <= 20.
+"""
+
+    def __init__(
+        self,
+        poi_provider: Optional[POIProvider] = None,
+        app_settings: Optional[Settings] = None,
+    ):
+        self.poi_provider = poi_provider
+        self._settings = app_settings or settings
+        self._planning_llm = None
+        self._scoring_llm = None
+
+    def _get_planning_llm(self):
+        if self._planning_llm is None:
+            self._planning_llm = get_curator_llm_client(self._settings)
+        return self._planning_llm
+
+    def _get_scoring_llm(self):
+        if self._scoring_llm is None:
+            self._scoring_llm = get_poi_selection_llm_client(self._settings)
+        return self._scoring_llm
+
+    def _block_type_for_category(self, category: str) -> BlockType:
+        lower = category.lower()
+        if lower in {"restaurant", "cafe", "bakery", "food"}:
+            return BlockType.MEAL
+        if lower in {"bar", "nightlife", "club", "nightclub", "pub"}:
+            return BlockType.NIGHTLIFE
+        return BlockType.ACTIVITY
+
+    def _normalize_keywords(self, keywords: list[str]) -> list[str]:
+        result = []
+        for keyword in keywords or []:
+            cleaned = str(keyword).strip().lower()
+            if cleaned and cleaned not in result:
+                result.append(cleaned)
+        return result
+
+    def _candidate_matches_preference(self, candidate: POICandidate, preference) -> bool:
+        keyword = (preference.keyword or "").lower()
+        category = self._normalize_category(preference.category)
+        if category:
+            candidate_category = (candidate.category or "").lower()
+            if category not in candidate_category:
+                if not candidate.tags or not any(category == tag.lower() for tag in candidate.tags):
+                    return False
+        if keyword:
+            haystack = f"{candidate.name} {' '.join(candidate.tags or [])}".lower()
+            if keyword not in haystack:
+                return False
+        if preference.price_level and candidate.price_level is not None:
+            price_map = {"cheap": [0, 1], "moderate": [2], "expensive": [3, 4]}
+            if candidate.price_level not in price_map.get(preference.price_level, []):
+                return False
+        return True
+
+    def _normalize_category(self, raw_category: Optional[str]) -> Optional[str]:
+        if not raw_category:
+            return None
+        value = str(raw_category).strip().lower()
+        if value in self.VALID_CATEGORIES:
+            return value
+        for keyword, mapped in self.CATEGORY_ALIASES:
+            if keyword in value:
+                return mapped
+        return None
+
+    def _build_deterministic_directives(self, macro_plan, trip_spec) -> list[SearchDirective]:
+        category_counts = Counter()
+        for day in macro_plan.days:
+            for block in day.blocks:
+                if block.block_type not in POIPlanner.BLOCK_TYPES_NEEDING_POIS:
+                    continue
+                for category in block.desired_categories or []:
+                    normalized = self._normalize_category(category)
+                    if normalized:
+                        category_counts[normalized] += 1
+
+        directives = []
+        min_per_category = self._settings.agentic_min_candidates_per_category
+        max_per_category = self._settings.agentic_max_candidates_per_category
+        multiplier = max(2, self._settings.agentic_candidate_multiplier)
+        max_categories = max(6, self._settings.agentic_llm_scoring_max_categories * 3)
+        top_categories = [cat for cat, _ in category_counts.most_common(max_categories)]
+
+        for category in top_categories:
+            count = category_counts[category]
+            min_count = max(min_per_category, count * multiplier)
+            min_count = min(min_count, max_per_category)
+            directives.append(SearchDirective(
+                category=category,
+                keywords=[],
+                min_count=min_count,
+                priority="high" if count >= 3 else "normal",
+                block_type=self._block_type_for_category(category),
+            ))
+
+        for pref in trip_spec.structured_preferences or []:
+            normalized_category = self._normalize_category(pref.category)
+            if not normalized_category:
+                continue
+            keyword = pref.keyword.strip() if pref.keyword else ""
+            min_count = min_per_category
+            if pref.quantity:
+                min_count = max(min_count, pref.quantity * multiplier)
+            min_count = min(min_count, max_per_category)
+            directives.append(SearchDirective(
+                category=normalized_category,
+                keywords=[keyword] if keyword else [],
+                min_count=min_count,
+                priority="must",
+                block_type=self._block_type_for_category(normalized_category),
+            ))
+
+        return directives
+
+    async def _build_llm_directives(
+        self,
+        trip_spec,
+        macro_plan,
+        base_directives: list[SearchDirective],
+        preference_profile: Optional["POIPreferenceProfile"],
+    ) -> list[SearchDirective]:
+        categories = sorted({d.category for d in base_directives})
+        structured = [p.model_dump() for p in (trip_spec.structured_preferences or [])]
+        preference_signals = []
+        if preference_profile:
+            preference_signals = (
+                preference_profile.must_include_keywords
+                + preference_profile.search_keywords
+                + list(preference_profile.tag_boosts.keys())
+            )
+        if not structured and not preference_signals:
+            return []
+
+        prompt = f"""Trip: {trip_spec.city}, {trip_spec.start_date} to {trip_spec.end_date}
+Pace: {trip_spec.pace.value}
+Budget: {trip_spec.budget.value}
+Interests: {', '.join(trip_spec.interests or []) or 'general'}
+Structured preferences: {structured}
+Available categories: {categories}
+
+Suggest search directives for Google Places. Use only available categories.
+"""
+
+        try:
+            response = await asyncio.wait_for(
+                self._get_planning_llm().generate_structured(
+                    prompt=prompt,
+                    system_prompt=self.SEARCH_SYSTEM_PROMPT,
+                    max_tokens=512,
+                ),
+                timeout=float(self._settings.curator_llm_timeout_seconds),
+            )
+        except Exception as exc:
+            logger.warning(f"Curator LLM search planning failed: {exc}")
+            return []
+
+        directives = []
+        for item in response.get("directives", []) if isinstance(response, dict) else []:
+            category = str(item.get("category", "")).strip()
+            if not category or category not in categories:
+                continue
+            keywords = self._normalize_keywords(item.get("keywords", []))
+            try:
+                min_count = int(item.get("min_count", 0))
+            except (TypeError, ValueError):
+                min_count = 0
+            if min_count < 10:
+                min_count = 10
+            priority = str(item.get("priority", "normal")).lower()
+            if priority not in {"must", "high", "normal"}:
+                priority = "normal"
+            directives.append(SearchDirective(
+                category=category,
+                keywords=keywords,
+                min_count=min_count,
+                priority=priority,
+                block_type=self._block_type_for_category(category),
+            ))
+
+        return directives
+
+    def _merge_directives(
+        self,
+        base_directives: list[SearchDirective],
+        llm_directives: list[SearchDirective],
+    ) -> list[SearchDirective]:
+        merged = {}
+        for directive in base_directives + llm_directives:
+            key = (directive.category, tuple(directive.keywords))
+            existing = merged.get(key)
+            if existing is None:
+                merged[key] = directive
+                continue
+            existing.min_count = max(existing.min_count, directive.min_count)
+            if directive.priority == "must":
+                existing.priority = "must"
+            elif directive.priority == "high" and existing.priority != "must":
+                existing.priority = "high"
+        return list(merged.values())
+
+    async def _fetch_candidates(
+        self,
+        directives: list[SearchDirective],
+        trip_spec,
+        db: AsyncSession,
+        preference_profile: Optional["POIPreferenceProfile"] = None,
+        deadline_ts: Optional[float] = None,
+    ) -> dict[str, list[POICandidate]]:
+        if not directives:
+            return {}
+
+        semaphore = asyncio.Semaphore(5)
+        max_per_category = self._settings.agentic_max_candidates_per_category
+        from src.infrastructure.database import AsyncSessionLocal
+        from src.infrastructure.poi_providers import DBPOIProvider
+
+        categories = {d.category for d in directives}
+        min_rating = self._settings.smart_routing_min_rating
+        if preference_profile:
+            min_rating = max(min_rating, preference_profile.min_rating)
+
+        db_provider = DBPOIProvider(db)
+        base_pools = await db_provider.search_pois_bulk(
+            city=trip_spec.city,
+            all_categories=categories,
+            budget=trip_spec.budget,
+            limit_per_category=max_per_category,
+            city_center_lat=trip_spec.city_center_lat,
+            city_center_lon=trip_spec.city_center_lon,
+            max_radius_km=50.0,
+            min_rating=min_rating,
+            include_tags=True,
+        )
+
+        async def fetch_one(directive: SearchDirective, limit_override: Optional[int] = None) -> tuple[str, list[POICandidate]]:
+            async with semaphore:
+                async with AsyncSessionLocal() as session:
+                    provider = get_poi_provider(session)
+                    limit = limit_override or min(max(directive.min_count, 6), max_per_category)
+                    candidates = await provider.search_pois(
+                        city=trip_spec.city,
+                        desired_categories=[directive.category],
+                        budget=trip_spec.budget,
+                        limit=limit,
+                        center_location=trip_spec.hotel_location,
+                        city_center_lat=trip_spec.city_center_lat,
+                        city_center_lon=trip_spec.city_center_lon,
+                        block_type=directive.block_type,
+                        search_keywords=directive.keywords or None,
+                        fetch_details=False,
+                    )
+                    return directive.category, candidates
+
+        missing = []
+        for directive in directives:
+            existing = base_pools.get(directive.category, [])
+            needed = max(0, directive.min_count - len(existing))
+            if needed <= 0:
+                continue
+            priority_score = 2 if directive.priority == "must" else 1 if directive.priority == "high" else 0
+            missing.append((priority_score, needed, directive))
+
+        missing.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        max_external_categories = max(4, self._settings.agentic_llm_scoring_max_categories + 1)
+        missing = missing[:max_external_categories]
+
+        results = []
+        if missing:
+            if deadline_ts is not None:
+                remaining = deadline_ts - time.monotonic()
+                if remaining <= 0:
+                    return base_pools
+                if remaining < 8:
+                    return base_pools
+            total_candidates = sum(len(pool) for pool in base_pools.values())
+            allow_normal = total_candidates < 40
+            budget_remaining = 12
+            if deadline_ts is not None:
+                remaining = deadline_ts - time.monotonic()
+                if remaining < 15:
+                    budget_remaining = min(budget_remaining, 6)
+            tasks = []
+            for _, needed, directive in missing:
+                if directive.priority == "normal" and not allow_normal:
+                    continue
+                if budget_remaining <= 0:
+                    break
+                limit = min(needed, budget_remaining, max_per_category)
+                tasks.append(fetch_one(directive, limit_override=limit))
+                budget_remaining -= limit
+            if tasks:
+                if deadline_ts is None:
+                    results = await asyncio.gather(*tasks)
+                else:
+                    remaining = max(1.0, deadline_ts - time.monotonic())
+                    try:
+                        results = await asyncio.wait_for(
+                            asyncio.gather(*tasks),
+                            timeout=remaining,
+                        )
+                    except Exception:
+                        results = []
+
+        by_category: dict[str, list[POICandidate]] = defaultdict(list)
+        for category, candidates in base_pools.items():
+            if candidates:
+                by_category[category].extend(candidates)
+        for category, candidates in results:
+            if candidates:
+                by_category[category].extend(candidates)
+        return by_category
+
+    async def _score_candidates_with_llm(
+        self,
+        trip_spec,
+        preference_profile: Optional["POIPreferenceProfile"],
+        candidates_by_category: dict[str, list[POICandidate]],
+        directives: list[SearchDirective],
+    ) -> dict[UUID, float]:
+        if (
+            not candidates_by_category
+            or not self._settings.enable_agentic_planning
+            or self._settings.agentic_llm_scoring_max_categories <= 0
+        ):
+            return {}
+        preference_signals = []
+        if preference_profile:
+            preference_signals = (
+                preference_profile.must_include_keywords
+                + list(preference_profile.tag_boosts.keys())
+                + preference_profile.search_keywords
+            )
+        if not (trip_spec.structured_preferences or preference_signals):
+            return {}
+
+        categories_priority = []
+        for directive in directives:
+            if directive.priority == "must":
+                priority_score = 2
+            elif directive.priority == "high":
+                priority_score = 1
+            else:
+                priority_score = 0
+            categories_priority.append((priority_score, directive.category))
+
+        categories_priority.sort(reverse=True)
+        selected_categories = []
+        for _, category in categories_priority:
+            if category not in selected_categories:
+                selected_categories.append(category)
+            if len(selected_categories) >= self._settings.agentic_llm_scoring_max_categories:
+                break
+
+        llm_scores: dict[UUID, float] = {}
+        for category in selected_categories:
+            candidates = candidates_by_category.get(category, [])
+            if not candidates:
+                continue
+
+            candidates.sort(key=lambda c: (c.rank_score or 0.0, c.rating or 0.0), reverse=True)
+            sample = candidates[:self._settings.poi_selection_max_candidates]
+
+            payload = []
+            for candidate in sample:
+                payload.append({
+                    "candidate_id": str(candidate.poi_id),
+                    "name": candidate.name,
+                    "category": candidate.category,
+                    "tags": candidate.tags[:5] if candidate.tags else [],
+                    "rating": candidate.rating,
+                    "price_level": candidate.price_level,
+                    "description": (candidate.description or "")[:140],
+                    "reviews": candidate.reviews[:1] if candidate.reviews else [],
+                })
+
+            preference_summary = {
+                "interests": trip_spec.interests,
+                "budget": trip_spec.budget.value,
+                "pace": trip_spec.pace.value,
+                "structured_preferences": [p.model_dump() for p in (trip_spec.structured_preferences or [])],
+            }
+
+            prompt = f"""Trip preferences:
+{preference_summary}
+
+Category: {category}
+
+Candidates:
+{payload}
+"""
+
+            try:
+                response = await asyncio.wait_for(
+                    self._get_scoring_llm().generate_structured(
+                        prompt=prompt,
+                        system_prompt=self.SCORE_SYSTEM_PROMPT,
+                        max_tokens=768,
+                    ),
+                    timeout=10,
+                )
+            except Exception as exc:
+                logger.warning(f"Curator LLM scoring failed for {category}: {exc}")
+                continue
+
+            for item in response.get("scores", []) if isinstance(response, dict) else []:
+                candidate_id = item.get("candidate_id")
+                try:
+                    score = float(item.get("score", 0))
+                except (TypeError, ValueError):
+                    continue
+                if not candidate_id:
+                    continue
+                for candidate in sample:
+                    if str(candidate.poi_id) == str(candidate_id):
+                        llm_scores[candidate.poi_id] = max(0.0, min(100.0, score))
+                        break
+
+        return llm_scores
+
+    async def _prioritize_candidates_with_llm(
+        self,
+        trip_spec,
+        preference_profile: Optional["POIPreferenceProfile"],
+        candidates: list[POICandidate],
+        clustering_result: Optional["ClusteringResult"],
+        deadline_ts: Optional[float],
+    ) -> tuple[list[UUID], list[UUID], Optional[str]]:
+        if not candidates or not self._settings.enable_agentic_planning:
+            return [], [], None
+        if deadline_ts is not None:
+            remaining = deadline_ts - time.monotonic()
+            if remaining <= float(self._settings.curator_llm_timeout_seconds):
+                return [], [], None
+
+        ranked = sorted(
+            candidates,
+            key=lambda c: (c.rank_score or 0.0, c.rating or 0.0),
+            reverse=True,
+        )
+        sample = ranked[:40]
+        district_lookup = {}
+        if clustering_result and clustering_result.districts:
+            for district in clustering_result.districts.values():
+                for poi in district.pois:
+                    district_lookup[poi.poi_id] = district.district_id
+
+        payload = []
+        for candidate in sample:
+            payload.append({
+                "candidate_id": str(candidate.poi_id),
+                "name": candidate.name,
+                "category": candidate.category,
+                "tags": candidate.tags[:5] if candidate.tags else [],
+                "rating": candidate.rating,
+                "price_level": candidate.price_level,
+                "district_id": district_lookup.get(candidate.poi_id),
+            })
+
+        preference_summary = {
+            "interests": trip_spec.interests,
+            "budget": trip_spec.budget.value,
+            "pace": trip_spec.pace.value,
+            "structured_preferences": [p.model_dump() for p in (trip_spec.structured_preferences or [])],
+            "must_include_keywords": preference_profile.must_include_keywords if preference_profile else [],
+        }
+
+        prompt = f"""Trip preferences:
+{preference_summary}
+
+Candidates:
+{payload}
+"""
+
+        try:
+            response = await asyncio.wait_for(
+                self._get_scoring_llm().generate_structured(
+                    prompt=prompt,
+                    system_prompt=self.PRIORITIZE_SYSTEM_PROMPT,
+                    max_tokens=512,
+                ),
+                timeout=float(self._settings.curator_llm_timeout_seconds),
+            )
+        except Exception as exc:
+            logger.warning(f"Curator LLM prioritization failed: {exc}")
+            return [], [], None
+
+        must_ids = []
+        nice_ids = []
+        notes = None
+        if isinstance(response, dict):
+            must_ids = [item for item in response.get("must_visit_ids", []) if isinstance(item, str)]
+            nice_ids = [item for item in response.get("nice_to_have_ids", []) if isinstance(item, str)]
+            notes = response.get("notes")
+
+        valid_ids = {str(c.poi_id) for c in sample}
+        parsed_must = []
+        for item in must_ids:
+            if item not in valid_ids:
+                continue
+            try:
+                parsed_must.append(UUID(item))
+            except ValueError:
+                continue
+        parsed_must = parsed_must[:10]
+
+        parsed_nice = []
+        for item in nice_ids:
+            if item not in valid_ids:
+                continue
+            if item in {str(mid) for mid in parsed_must}:
+                continue
+            try:
+                parsed_nice.append(UUID(item))
+            except ValueError:
+                continue
+        parsed_nice = parsed_nice[:20]
+        return parsed_must, parsed_nice, notes
+        return must_ids, nice_ids, notes
+
+    def _prioritize_candidates_heuristic(
+        self,
+        trip_spec,
+        preference_profile: Optional["POIPreferenceProfile"],
+        candidates: list[POICandidate],
+    ) -> tuple[list[UUID], list[UUID]]:
+        if not candidates:
+            return [], []
+        must_ids = []
+        nice_ids = []
+
+        if preference_profile:
+            for pref in trip_spec.structured_preferences or []:
+                for candidate in candidates:
+                    if self._candidate_matches_preference(candidate, pref):
+                        must_ids.append(candidate.poi_id)
+
+            for keyword in preference_profile.must_include_keywords:
+                keyword = keyword.lower()
+                for candidate in candidates:
+                    haystack = f"{candidate.name} {' '.join(candidate.tags or [])}".lower()
+                    if keyword and keyword in haystack:
+                        must_ids.append(candidate.poi_id)
+
+        must_unique = []
+        seen = set()
+        for poi_id in must_ids:
+            if poi_id not in seen:
+                must_unique.append(poi_id)
+                seen.add(poi_id)
+        must_unique = must_unique[:10]
+
+        ranked = sorted(
+            candidates,
+            key=lambda c: (c.rank_score or 0.0, c.rating or 0.0),
+            reverse=True,
+        )
+        for candidate in ranked:
+            if candidate.poi_id in seen:
+                continue
+            nice_ids.append(candidate.poi_id)
+            if len(nice_ids) >= 20:
+                break
+        return must_unique, nice_ids
+
+    async def expand_candidates(
+        self,
+        requests: list[SearchDirective],
+        trip_spec,
+        db: AsyncSession,
+        curated_bank: CuratedPOIBank,
+        preference_profile: Optional["POIPreferenceProfile"],
+        deadline_ts: Optional[float],
+    ) -> CuratedPOIBank:
+        if not requests:
+            return curated_bank
+
+        if deadline_ts is not None:
+            remaining = deadline_ts - time.monotonic()
+            if remaining <= 0:
+                return curated_bank
+
+        semaphore = asyncio.Semaphore(3)
+        from src.infrastructure.database import AsyncSessionLocal
+
+        async def fetch_one(directive: SearchDirective) -> tuple[str, list[POICandidate]]:
+            async with semaphore:
+                async with AsyncSessionLocal() as session:
+                    provider = get_poi_provider(session)
+                    limit = min(max(directive.min_count, 4), self._settings.agentic_max_candidates_per_category)
+                    candidates = await provider.search_pois(
+                        city=trip_spec.city,
+                        desired_categories=[directive.category],
+                        budget=trip_spec.budget,
+                        limit=limit,
+                        center_location=trip_spec.hotel_location,
+                        city_center_lat=trip_spec.city_center_lat,
+                        city_center_lon=trip_spec.city_center_lon,
+                        block_type=directive.block_type,
+                        search_keywords=directive.keywords or None,
+                        fetch_details=False,
+                    )
+                    return directive.category, candidates
+
+        tasks = []
+        for directive in requests[:3]:
+            tasks.append(fetch_one(directive))
+
+        results = []
+        if tasks:
+            if deadline_ts is None:
+                results = await asyncio.gather(*tasks)
+            else:
+                remaining = max(1.0, deadline_ts - time.monotonic())
+                try:
+                    results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=remaining)
+                except Exception:
+                    results = []
+
+        if not results:
+            return curated_bank
+
+        deduped: dict[UUID, POICandidate] = {c.poi_id: c for c in curated_bank.candidates}
+        for _, candidates in results:
+            for candidate in candidates:
+                existing = deduped.get(candidate.poi_id)
+                if not existing or (candidate.rank_score or 0) > (existing.rank_score or 0):
+                    deduped[candidate.poi_id] = candidate
+        curated_bank.candidates = list(deduped.values())
+
+        for category, candidates in results:
+            if not candidates:
+                continue
+            curated_bank.candidates_by_category.setdefault(category, [])
+            curated_bank.candidates_by_category[category].extend(candidates)
+
+        return curated_bank
+
+    def _cluster_candidates(self, candidates: list[POICandidate], trip_spec):
+        if not candidates:
+            return None
+
+        from src.application.geo_clustering import GeoClusterer
+
+        clusterer = GeoClusterer(
+            cell_size_km=self._settings.cluster_cell_size_km,
+            min_pois_per_district=self._settings.min_pois_per_district,
+            max_districts=self._settings.max_districts_per_city,
+        )
+        return clusterer.cluster_pois(
+            pois=[c for c in candidates if c.lat is not None and c.lon is not None],
+            hotel_lat=trip_spec.hotel_lat,
+            hotel_lon=trip_spec.hotel_lon,
+            city_center_lat=trip_spec.city_center_lat,
+            city_center_lon=trip_spec.city_center_lon,
+        )
+
+    async def curate_poi_bank(
+        self,
+        trip_spec,
+        macro_plan,
+        db: AsyncSession,
+        preference_profile: Optional["POIPreferenceProfile"] = None,
+        deadline_ts: Optional[float] = None,
+    ) -> CuratedPOIBank:
+        base_directives = self._build_deterministic_directives(macro_plan, trip_spec)
+        llm_directives = []
+        if self._settings.enable_agentic_planning:
+            if deadline_ts is not None:
+                remaining = deadline_ts - time.monotonic()
+                if remaining <= float(self._settings.curator_llm_timeout_seconds):
+                    remaining = 0
+            else:
+                remaining = None
+            if remaining is None or remaining > 0:
+                llm_directives = await self._build_llm_directives(
+                    trip_spec,
+                    macro_plan,
+                    base_directives,
+                    preference_profile,
+                )
+        directives = self._merge_directives(base_directives, llm_directives)
+
+        candidates_by_category = await self._fetch_candidates(
+            directives,
+            trip_spec,
+            db,
+            preference_profile=preference_profile,
+            deadline_ts=deadline_ts,
+        )
+
+        # Deduplicate and keep best rank_score
+        deduped: dict[UUID, POICandidate] = {}
+        for candidates in candidates_by_category.values():
+            for candidate in candidates:
+                existing = deduped.get(candidate.poi_id)
+                if not existing or (candidate.rank_score or 0) > (existing.rank_score or 0):
+                    deduped[candidate.poi_id] = candidate
+
+        candidates = list(deduped.values())
+        llm_scores = await self._score_candidates_with_llm(
+            trip_spec,
+            preference_profile,
+            candidates_by_category,
+            directives,
+        )
+
+        clustering_result = self._cluster_candidates(candidates, trip_spec)
+
+        must_ids, nice_ids, notes = await self._prioritize_candidates_with_llm(
+            trip_spec=trip_spec,
+            preference_profile=preference_profile,
+            candidates=candidates,
+            clustering_result=clustering_result,
+            deadline_ts=deadline_ts,
+        )
+        if not must_ids and not nice_ids:
+            must_ids, nice_ids = self._prioritize_candidates_heuristic(
+                trip_spec=trip_spec,
+                preference_profile=preference_profile,
+                candidates=candidates,
+            )
+
+        return CuratedPOIBank(
+            candidates=candidates,
+            candidates_by_category=candidates_by_category,
+            llm_scores=llm_scores,
+            directives=directives,
+            clustering_result=clustering_result,
+            must_visit_ids=must_ids,
+            nice_to_have_ids=nice_ids,
+            curator_notes=notes,
         )

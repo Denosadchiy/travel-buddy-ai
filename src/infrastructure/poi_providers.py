@@ -197,6 +197,7 @@ class POIProvider(ABC):
         max_radius_km: float = DEFAULT_MAX_RADIUS_KM,
         block_type: Optional[BlockType] = None,
         search_keywords: Optional[list[str]] = None,
+        fetch_details: bool = True,
     ) -> list[POICandidate]:
         """
         Search for POIs matching criteria.
@@ -211,6 +212,7 @@ class POIProvider(ABC):
             city_center_lon: City center longitude for radius filtering
             max_radius_km: Maximum radius from city center in km (default: 20km)
             block_type: Type of block (MEAL, ACTIVITY, etc.) for category filtering
+            fetch_details: Whether to fetch full place details for external sources
 
         Returns:
             List of POICandidate objects, ranked by relevance
@@ -408,6 +410,7 @@ class DBPOIProvider(POIProvider):
         max_radius_km: float = DEFAULT_MAX_RADIUS_KM,
         block_type: Optional[BlockType] = None,
         search_keywords: Optional[list[str]] = None,
+        fetch_details: bool = True,
     ) -> list[POICandidate]:
         """Search internal database for matching POIs with radius and category filtering."""
         if not desired_categories:
@@ -646,10 +649,11 @@ class GooglePlacesPOIProvider(POIProvider):
         place: GooglePlaceResult,
         city: str,
         desired_categories: list[str],
+        fetch_details: bool = True,
     ) -> POIModel:
         """
         Cache a Google Place result to the database.
-        Fetches full details before caching.
+        Optionally fetches full details before caching.
         """
         from sqlalchemy.exc import IntegrityError
         from src.infrastructure.google_place_details import fetch_place_details
@@ -665,12 +669,15 @@ class GooglePlacesPOIProvider(POIProvider):
         )
         existing = result.scalars().first()
 
-        # Fetch full details from Google
-        try:
-            details = await fetch_place_details(place.place_id)
-        except Exception as e:
-            logger.warning(f"Failed to fetch details for {place.name}: {e}")
-            details = None
+        details = None
+        if fetch_details:
+            has_details = existing and (existing.description or existing.reviews)
+            if not has_details:
+                try:
+                    details = await fetch_place_details(place.place_id)
+                except Exception as e:
+                    logger.warning(f"Failed to fetch details for {place.name}: {e}")
+                    details = None
 
         category = self._map_google_types_to_category(place.types, desired_categories)
         tags = list(set(place.types + [category]))
@@ -782,6 +789,7 @@ class GooglePlacesPOIProvider(POIProvider):
         max_radius_km: float = DEFAULT_MAX_RADIUS_KM,
         block_type: Optional[BlockType] = None,
         search_keywords: Optional[list[str]] = None,
+        fetch_details: bool = True,
     ) -> list[POICandidate]:
         """
         Search Google Places API for POIs and cache results.
@@ -826,7 +834,12 @@ class GooglePlacesPOIProvider(POIProvider):
             ):
                 continue
 
-            poi_model = await self._cache_place_to_db(place, city, desired_categories)
+            poi_model = await self._cache_place_to_db(
+                place,
+                city,
+                desired_categories,
+                fetch_details=fetch_details,
+            )
             score = self._calculate_relevance_score(place, desired_categories, budget)
 
             candidate = POICandidate(
@@ -891,6 +904,7 @@ class CompositePOIProvider(POIProvider):
         max_radius_km: float = DEFAULT_MAX_RADIUS_KM,
         block_type: Optional[BlockType] = None,
         search_keywords: Optional[list[str]] = None,
+        fetch_details: bool = True,
     ) -> list[POICandidate]:
         """
         Search POIs using composite strategy with radius and block type filtering.
@@ -914,6 +928,7 @@ class CompositePOIProvider(POIProvider):
             max_radius_km=max_radius_km,
             block_type=block_type,
             search_keywords=search_keywords,
+            fetch_details=fetch_details,
         )
 
         logger.debug(f"DB returned {len(db_results)} POIs for {city}")
@@ -937,6 +952,7 @@ class CompositePOIProvider(POIProvider):
                 max_radius_km=max_radius_km,
                 block_type=block_type,
                 search_keywords=search_keywords,
+                fetch_details=fetch_details,
             )
             logger.debug(f"External API returned {len(external_results)} POIs")
         except Exception as e:

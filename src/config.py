@@ -96,11 +96,89 @@ class Settings(BaseSettings):
         default=15,
         description="Maximum candidates to send to LLM for POI selection (cost control)"
     )
+    poi_preference_llm_timeout_seconds: int = Field(
+        default=6,
+        description="Timeout for POI preference LLM call"
+    )
+    curator_llm_timeout_seconds: int = Field(
+        default=8,
+        description="Timeout for curator LLM directive generation"
+    )
+    day_level_selection_llm_timeout_seconds: int = Field(
+        default=6,
+        description="Timeout for day-level POI selection LLM"
+    )
+    route_engineer_llm_timeout_seconds: int = Field(
+        default=6,
+        description="Timeout for route engineer LLM calls"
+    )
+    curator_model: str = Field(
+        default="",
+        description="Optional model override for POI curator (defaults to trip_planning_model)"
+    )
+    route_engineer_model: str = Field(
+        default="",
+        description="Optional model override for route engineer (defaults to trip_planning_model)"
+    )
 
     # Preference profile generation for POI scoring
     use_llm_for_poi_preferences: bool = Field(
         default=True,
         description="Use LLM to build preference profile for POI ranking"
+    )
+
+    # Agentic planning (POI Curator + Route Engineer)
+    enable_agentic_planning: bool = Field(
+        default=True,
+        description="Use agentic Curator/Engineer pipeline when smart routing is enabled"
+    )
+    agentic_candidate_multiplier: int = Field(
+        default=2,
+        description="Candidate multiplier per required block for agentic POI curation"
+    )
+    agentic_min_candidates_per_category: int = Field(
+        default=6,
+        description="Minimum POI candidates per category for agentic planning"
+    )
+    agentic_max_candidates_per_category: int = Field(
+        default=20,
+        description="Maximum POI candidates per category for agentic planning"
+    )
+    agentic_llm_score_weight: float = Field(
+        default=0.35,
+        description="Weight for curator LLM scores when ranking candidates"
+    )
+    agentic_llm_scoring_max_categories: int = Field(
+        default=1,
+        description="Max categories to LLM-score per curation pass"
+    )
+    agentic_day_selection_max_candidates: int = Field(
+        default=6,
+        description="Max candidates per block sent to day-level LLM in agentic planning"
+    )
+    agentic_use_fast_macro_plan: bool = Field(
+        default=True,
+        description="Use fast chat model for macro planning when agentic pipeline is enabled"
+    )
+    agentic_use_template_macro_plan: bool = Field(
+        default=True,
+        description="Use template macro plan instead of LLM when agentic pipeline is enabled"
+    )
+    planning_deadline_seconds: int = Field(
+        default=60,
+        description="Max end-to-end planning time budget in seconds"
+    )
+    agentic_use_llm_for_district_planning: bool = Field(
+        default=False,
+        description="Use LLM for district planning in agentic pipeline"
+    )
+    agentic_use_llm_for_route_optimization: bool = Field(
+        default=True,
+        description="Use LLM for route ordering in agentic pipeline"
+    )
+    agentic_use_day_level_poi_selection: bool = Field(
+        default=True,
+        description="Use day-level LLM selection in agentic pipeline"
     )
 
     # Day-level LLM selection for POIs (selects one candidate per block)

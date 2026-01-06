@@ -19,7 +19,11 @@ from uuid import UUID
 from src.config import settings, Settings
 from src.domain.models import POICandidate, BlockType, BudgetLevel, PaceLevel
 from src.domain.schemas import TripResponse
-from src.infrastructure.llm_client import LLMClient, get_poi_selection_llm_client
+from src.infrastructure.llm_client import (
+    LLMClient,
+    get_poi_selection_llm_client,
+    get_route_engineer_llm_client,
+)
 from src.infrastructure.poi_providers import haversine_distance_km
 
 logger = logging.getLogger(__name__)
@@ -102,7 +106,32 @@ CRITICAL RULES:
 6. Return ONLY valid JSON matching the schema. No extra text.
 """
 
+    DAY_LEVEL_SYSTEM_PROMPT_WITH_REQUESTS = """You are a route-aware POI selector for a single day.
+
+CRITICAL RULES:
+1. You MUST ONLY choose from the candidates provided for each block.
+2. You MUST select at most ONE candidate per block.
+3. You MUST NOT repeat the same candidate across blocks.
+4. You MUST NOT invent places or IDs.
+5. Prefer candidates that keep consecutive blocks close (avoid long hops).
+6. If key preferences cannot be satisfied with the given candidates, request more candidates.
+7. Return ONLY valid JSON matching the schema. No extra text.
+"""
+
     DAY_LEVEL_MAX_CANDIDATES_PER_BLOCK = 8
+    REQUEST_CATEGORIES = [
+        "restaurant",
+        "cafe",
+        "bar",
+        "bakery",
+        "food",
+        "museum",
+        "attraction",
+        "park",
+        "shopping",
+        "wellness",
+        "nightlife",
+    ]
 
     def __init__(
         self,
@@ -117,6 +146,7 @@ CRITICAL RULES:
             app_settings: Optional settings override (for testing)
         """
         self._llm_client = llm_client
+        self._route_llm_client: Optional[LLMClient] = None
         self._settings = app_settings or settings
 
     @property
@@ -125,6 +155,19 @@ CRITICAL RULES:
         if self._llm_client is None:
             self._llm_client = get_poi_selection_llm_client(self._settings)
         return self._llm_client
+
+    @property
+    def route_llm_client(self) -> LLMClient:
+        """Lazy initialization of Route Engineer LLM client."""
+        if self._route_llm_client is None:
+            try:
+                self._route_llm_client = get_route_engineer_llm_client(self._settings)
+            except Exception as exc:
+                logger.warning(
+                    f"Route engineer LLM unavailable, falling back: {exc}"
+                )
+                self._route_llm_client = self.llm_client
+        return self._route_llm_client
 
     def _build_candidate_description(
         self,
@@ -325,8 +368,16 @@ Respond with JSON only. No explanations outside the JSON."""
         city_center_lon: Optional[float],
         preference_summary: Optional[dict],
         max_candidates_per_block: int,
+        must_visit_ids: Optional[list[UUID]] = None,
+        nice_to_have_ids: Optional[list[UUID]] = None,
+        include_requests: bool = False,
     ) -> str:
         """Build a day-level prompt for selecting one POI per block."""
+        must_visit_ids = must_visit_ids or []
+        nice_to_have_ids = nice_to_have_ids or []
+        must_id_strings = [str(pid) for pid in must_visit_ids]
+        nice_id_strings = [str(pid) for pid in nice_to_have_ids]
+
         blocks_payload = []
         for block in blocks:
             candidates = candidates_by_block.get(block.block_index, [])
@@ -355,6 +406,56 @@ Respond with JSON only. No explanations outside the JSON."""
         if anchor_lat is not None and anchor_lon is not None:
             anchor_payload = {"lat": anchor_lat, "lon": anchor_lon}
 
+        priority_payload = []
+        if must_id_strings or nice_id_strings:
+            priority_ids = set(must_id_strings + nice_id_strings)
+            seen_ids = set()
+            for block in blocks:
+                for candidate in candidates_by_block.get(block.block_index, []):
+                    candidate_id = str(candidate.poi_id)
+                    if candidate_id not in priority_ids or candidate_id in seen_ids:
+                        continue
+                    priority_payload.append({
+                        "candidate_id": candidate_id,
+                        "name": candidate.name,
+                        "category": candidate.category,
+                        "block_index": block.block_index,
+                        "priority": "must" if candidate_id in must_id_strings else "nice",
+                    })
+                    seen_ids.add(candidate_id)
+
+        request_categories = json.dumps(self.REQUEST_CATEGORIES)
+        request_instructions = ""
+        response_schema = """{
+  "selections": [
+    {"block_index": 0, "candidate_id": "uuid-from-candidates", "reason": "optional"}
+  ]
+}"""
+
+        if include_requests:
+            request_instructions = f"""
+5. Prefer must-visit candidates when available, then nice-to-have.
+6. If key preferences cannot be satisfied with current candidates, add 1-3 requests.
+
+## Request Categories (use only these)
+{request_categories}
+"""
+            response_schema = """{
+  "selections": [
+    {"block_index": 0, "candidate_id": "uuid-from-candidates", "reason": "optional"}
+  ],
+  "requests": [
+    {
+      "category": "restaurant",
+      "keywords": ["craft beer", "michelin"],
+      "min_count": 10,
+      "priority": "must"
+    }
+  ]
+}"""
+        else:
+            request_instructions = "5. Prefer must-visit candidates when available, then nice-to-have."
+
         prompt = f"""Select one candidate per block for this day.
 
 ## Trip Information
@@ -375,6 +476,9 @@ Respond with JSON only. No explanations outside the JSON."""
 ## Already Selected (do not repeat)
 {json.dumps([str(pid) for pid in day_context.already_selected_poi_ids])}
 
+## Priority Candidates (if present in candidates, prefer them)
+{json.dumps(priority_payload, indent=2)}
+
 ## Blocks and Candidates
 ```json
 {json.dumps(blocks_payload, indent=2)}
@@ -385,14 +489,11 @@ Respond with JSON only. No explanations outside the JSON."""
 2. Prefer candidates that keep consecutive blocks close together.
 3. Avoid duplicates across blocks.
 4. Use ONLY candidate_id values from each block's candidate list.
+{request_instructions}
 
 ## Required Response Format (JSON only)
 ```json
-{{
-  "selections": [
-    {{"block_index": 0, "candidate_id": "uuid-from-candidates", "reason": "optional"}}
-  ]
-}}
+{response_schema}
 ```
 
 Respond with JSON only."""
@@ -443,6 +544,67 @@ Respond with JSON only."""
             seen_ids.add(candidate_id_str)
 
         return result
+
+    def _parse_day_response_with_requests(
+        self,
+        llm_response: dict,
+        candidates_by_block: dict[int, list[POICandidate]],
+        already_selected_ids: set[UUID],
+    ) -> tuple[dict[int, POICandidate], list[dict]]:
+        """Validate day-level response and extract search requests."""
+        selections = self._parse_day_response(
+            llm_response=llm_response,
+            candidates_by_block=candidates_by_block,
+            already_selected_ids=already_selected_ids,
+        )
+
+        raw_requests = llm_response.get("requests", [])
+        if not isinstance(raw_requests, list):
+            raw_requests = []
+
+        requests: list[dict] = []
+        seen_categories: set[str] = set()
+        for item in raw_requests:
+            if not isinstance(item, dict):
+                continue
+            category = item.get("category")
+            if not isinstance(category, str):
+                continue
+            category = category.strip().lower()
+            if not category or category in seen_categories:
+                continue
+            keywords_raw = item.get("keywords", [])
+            keywords: list[str] = []
+            if isinstance(keywords_raw, list):
+                for keyword in keywords_raw:
+                    keyword = str(keyword).strip().lower()
+                    if keyword and keyword not in keywords:
+                        keywords.append(keyword)
+
+            try:
+                min_count = int(item.get("min_count", 0))
+            except (TypeError, ValueError):
+                min_count = 0
+            if min_count <= 0:
+                min_count = 6
+            min_count = max(4, min(20, min_count))
+
+            priority = item.get("priority", "normal")
+            if priority not in {"must", "high", "normal"}:
+                priority = "normal"
+
+            requests.append({
+                "category": category,
+                "keywords": keywords[:4],
+                "min_count": min_count,
+                "priority": priority,
+            })
+            seen_categories.add(category)
+
+            if len(requests) >= 3:
+                break
+
+        return selections, requests
 
     async def select_pois_for_day(
         self,
@@ -514,6 +676,87 @@ Respond with JSON only."""
             logger.warning(f"Day-level LLM selection failed (unexpected error): {e}")
 
         return {}
+
+    async def select_pois_for_day_with_requests(
+        self,
+        trip_context: TripContext,
+        day_context: DayContext,
+        blocks: list[BlockContext],
+        candidates_by_block: dict[int, list[POICandidate]],
+        already_selected_ids: set[UUID],
+        max_hop_distance_km: Optional[float] = None,
+        anchor_lat: Optional[float] = None,
+        anchor_lon: Optional[float] = None,
+        city_center_lat: Optional[float] = None,
+        city_center_lon: Optional[float] = None,
+        preference_summary: Optional[dict] = None,
+        must_visit_ids: Optional[list[UUID]] = None,
+        nice_to_have_ids: Optional[list[UUID]] = None,
+    ) -> tuple[dict[int, POICandidate], list[dict]]:
+        """
+        Use LLM to select one POI per block for a day and request more candidates.
+
+        Returns a mapping of block_index -> selected POICandidate and a list of
+        search request dicts.
+        """
+        if not blocks:
+            return {}, []
+
+        max_candidates = min(
+            self._settings.poi_selection_max_candidates,
+            self.DAY_LEVEL_MAX_CANDIDATES_PER_BLOCK,
+        )
+
+        prompt = self._build_day_prompt(
+            trip_context=trip_context,
+            day_context=day_context,
+            blocks=blocks,
+            candidates_by_block=candidates_by_block,
+            max_hop_distance_km=max_hop_distance_km,
+            anchor_lat=anchor_lat,
+            anchor_lon=anchor_lon,
+            city_center_lat=city_center_lat,
+            city_center_lon=city_center_lon,
+            preference_summary=preference_summary,
+            max_candidates_per_block=max_candidates,
+            must_visit_ids=must_visit_ids,
+            nice_to_have_ids=nice_to_have_ids,
+            include_requests=True,
+        )
+
+        try:
+            logger.info(
+                f"Calling LLM for day-level POI selection with requests: day={day_context.day_number}, "
+                f"blocks={len(blocks)}"
+            )
+            llm_response = await self.route_llm_client.generate_structured(
+                prompt=prompt,
+                system_prompt=self.DAY_LEVEL_SYSTEM_PROMPT_WITH_REQUESTS,
+                max_tokens=896,
+            )
+
+            selected_map, requests = self._parse_day_response_with_requests(
+                llm_response=llm_response,
+                candidates_by_block=candidates_by_block,
+                already_selected_ids=already_selected_ids,
+            )
+
+            if selected_map:
+                logger.info(
+                    f"LLM selected POIs for {len(selected_map)} blocks on day {day_context.day_number}"
+                )
+            if requests:
+                logger.info(
+                    f"LLM requested {len(requests)} additional POI searches on day {day_context.day_number}"
+                )
+            return selected_map, requests
+
+        except ValueError as e:
+            logger.warning(f"Day-level LLM selection failed (JSON error): {e}")
+        except Exception as e:
+            logger.warning(f"Day-level LLM selection failed (unexpected error): {e}")
+
+        return {}, []
 
     async def select_pois_for_block(
         self,
