@@ -22,14 +22,16 @@ struct RouteBuildingData: Identifiable {
 struct NewTripView: View {
     let prefilledTicket: FlightTicket?
 
+    @Environment(\.dismiss) private var dismiss
+
     @State private var selectedCity: String
     @State private var startDate: Date
     @State private var endDate: Date
     @State private var showDatePicker: Bool = false
-    @State private var adultsCount: Int = 2
+    @State private var adultsCount: Int = 1
     @State private var childrenCount: Int = 0
     @State private var showTravelersPicker: Bool = false
-    @State private var selectedInterests: Set<String> = ["Гастрономия", "Ночная жизнь", "Природа и виды"]
+    @State private var selectedInterests: Set<String> = ["Гастро", "Искусство"]
 
     // Route building state - using Identifiable item for fullScreenCover
     @State private var routeBuildingData: RouteBuildingData?
@@ -68,7 +70,12 @@ struct NewTripView: View {
     @State private var showErrorAlert: Bool = false
     @State private var currentTripId: UUID?  // Хранит ID созданной поездки для чата
 
-    let popularCities = ["Стамбул", "Рим", "Бали", "Тбилиси"]
+    private let warmWhite = Color(red: 0.95, green: 0.94, blue: 0.92)
+    private let mutedWarmGray = Color(red: 0.70, green: 0.67, blue: 0.63)
+    private let glassFill = Color.white.opacity(0.08)
+    private let glassBorder = Color.white.opacity(0.14)
+
+    let popularCities = ["Париж", "Бали", "Нью-Йорк"]
 
     // MARK: - Init
 
@@ -81,7 +88,7 @@ struct NewTripView: View {
         let defaultStart = calendar.date(byAdding: .day, value: 1, to: Date()) ?? Date()
         let defaultEnd = calendar.date(byAdding: .day, value: 6, to: defaultStart) ?? Date()
 
-        _selectedCity = State(initialValue: "Стамбул")
+        _selectedCity = State(initialValue: "Бали")
         _startDate = State(initialValue: defaultStart)
         _endDate = State(initialValue: defaultEnd)
     }
@@ -117,27 +124,17 @@ struct NewTripView: View {
     
     var body: some View {
         ZStack {
-            // Фон
-            LinearGradient(
-                colors: [
-                    Color.white,
-                    Color(red: 0.98, green: 0.99, blue: 1.0)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
+            SmokyBackgroundView()
             
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 22) {
+                    headerSection
+
                     // Секция: Город / Направление
                     citySection
                     
-                    // Секция: Даты поездки
-                    datesSection
-                    
-                    // Секция: Путешественники
-                    travelersSection
+                    // Секция: Даты поездки + Путешественники
+                    datesTravelersSection
                     
                     // Секция: Интересы
                     interestsSection
@@ -146,34 +143,20 @@ struct NewTripView: View {
                     budgetSection
                     
                     // Секция: Пожелания к поездке
-                    wishesSection
-                    
-                    // Встроенный чат
-                    inlineChatSection
+                    wishesCard
                     
                     // Кнопка "Спланировать поездку"
                     planTripButton
                         .padding(.top, 8)
                 }
                 .padding(.horizontal, 20)
-                .padding(.vertical, 16)
-                .padding(.bottom, 24)
+                .padding(.top, 14)
+                .padding(.bottom, 28)
             }
         }
         .background(tripPlanNavigationLink)
-        .navigationTitle("Новая поездка")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button(action: {
-                    // Placeholder для помощи
-                }) {
-                    Image(systemName: "questionmark.circle")
-                        .font(.system(size: 20))
-                        .foregroundColor(Color(.label))
-                }
-            }
-        }
+        .background(NavigationPopEnabler())
+        .navigationBarHidden(true)
         .onAppear {
             // Предзаполнить данные из билета при первом появлении view
             if let ticket = prefilledTicket {
@@ -249,30 +232,36 @@ struct NewTripView: View {
         }
         .hidden()
     }
+
+    // MARK: Header
+
+    private var headerSection: some View {
+        HStack {
+            Button(action: { dismiss() }) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(mutedWarmGray)
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+        }
+        .overlay(
+            Text("Новая поездка")
+                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                .foregroundColor(warmWhite)
+        )
+        .padding(.top, 6)
+    }
     
     // MARK: City Section
 
     private var citySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("ГОРОД / НАПРАВЛЕНИЕ")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundColor(Color(.secondaryLabel))
-                    .textCase(.uppercase)
+        VStack(alignment: .leading, spacing: 14) {
+            DestinationAutocompleteField(cityName: $selectedCity, placeholder: "Куда поедем?")
+                .zIndex(10)
 
-                if prefilledTicket != nil {
-                    Spacer()
-                    Label("Из билета", systemImage: "airplane.circle.fill")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.travelBuddyOrange)
-                }
-            }
-
-            // Поле ввода города с автодополнением
-            DestinationAutocompleteField(cityName: $selectedCity)
-                .zIndex(10) // Чтобы dropdown был поверх других элементов
-
-            // Популярные города
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
                     ForEach(popularCities, id: \.self) { city in
@@ -280,74 +269,46 @@ struct NewTripView: View {
                             selectedCity = city
                         }) {
                             Text(city)
-                                .font(.system(size: 15, weight: .medium))
-                                .foregroundColor(selectedCity == city ? Color(red: 1.0, green: 0.55, blue: 0.30) : Color(.label))
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 10)
+                                .font(.system(size: 14, weight: .medium, design: .rounded))
+                                .foregroundColor(selectedCity == city ? Color.travelBuddyOrange : warmWhite)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
                                 .background(
-                                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                        .fill(selectedCity == city ? Color(red: 1.0, green: 0.55, blue: 0.30).opacity(0.1) : Color(.systemGray6))
+                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                        .fill(selectedCity == city ? Color.travelBuddyOrange.opacity(0.12) : glassFill)
                                 )
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                        .stroke(selectedCity == city ? Color(red: 1.0, green: 0.55, blue: 0.30) : Color.clear, lineWidth: 1.5)
+                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                        .stroke(selectedCity == city ? Color.travelBuddyOrange : glassBorder, lineWidth: 1)
                                 )
                         }
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, 2)
             }
         }
     }
     
-    // MARK: Dates Section
-    
-    private var datesSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("ДАТЫ ПОЕЗДКИ")
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundColor(Color(.secondaryLabel))
-                .textCase(.uppercase)
-            
-            Button(action: {
+    // MARK: Dates & Travelers Section
+
+    private var datesTravelersSection: some View {
+        HStack(spacing: 14) {
+            infoCard(
+                title: "ДАТЫ",
+                value: formattedDates,
+                systemImage: "calendar"
+            ) {
                 showDatePicker = true
-            }) {
-                HStack(spacing: 14) {
-                    ZStack {
-                        Circle()
-                            .fill(Color(red: 0.4, green: 0.7, blue: 1.0).opacity(0.15))
-                            .frame(width: 44, height: 44)
-                        
-                        Image(systemName: "calendar")
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundColor(Color(red: 0.2, green: 0.6, blue: 1.0))
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(formattedDates)
-                            .font(.system(size: 17, weight: .semibold, design: .rounded))
-                            .foregroundColor(Color(.label))
-                        
-                        Text("Можно изменить позже")
-                            .font(.system(size: 13))
-                            .foregroundColor(Color(.secondaryLabel))
-                    }
-                    
-                    Spacer()
-                    
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(Color(.tertiaryLabel))
-                }
-                .padding(16)
-                .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(Color.white)
-                )
-                .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
             }
-            .buttonStyle(.plain)
+
+            infoCard(
+                title: "ГОСТИ",
+                value: travelersText,
+                systemImage: "person.2.fill"
+            ) {
+                showTravelersPicker = true
+            }
         }
         .sheet(isPresented: $showDatePicker) {
             DatePickerSheet(
@@ -355,56 +316,6 @@ struct NewTripView: View {
                 endDate: $endDate,
                 isPresented: $showDatePicker
             )
-        }
-    }
-    
-    // MARK: Travelers Section
-    
-    private var travelersSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("ПУТЕШЕСТВЕННИКИ")
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundColor(Color(.secondaryLabel))
-                .textCase(.uppercase)
-            
-            Button(action: {
-                showTravelersPicker = true
-            }) {
-                HStack(spacing: 14) {
-                    ZStack {
-                        Circle()
-                            .fill(Color(red: 0.7, green: 0.5, blue: 0.9).opacity(0.15))
-                            .frame(width: 44, height: 44)
-                        
-                        Image(systemName: "person.2.fill")
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundColor(Color(red: 0.6, green: 0.4, blue: 0.8))
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(travelersText)
-                            .font(.system(size: 17, weight: .semibold, design: .rounded))
-                            .foregroundColor(Color(.label))
-                        
-                        Text("Помогу подобрать комфортный маршрут")
-                            .font(.system(size: 13))
-                            .foregroundColor(Color(.secondaryLabel))
-                    }
-                    
-                    Spacer()
-                    
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(Color(.tertiaryLabel))
-                }
-                .padding(16)
-                .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(Color.white)
-                )
-                .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
-            }
-            .buttonStyle(.plain)
         }
         .sheet(isPresented: $showTravelersPicker) {
             TravelersPickerSheet(
@@ -416,40 +327,29 @@ struct NewTripView: View {
     }
     
     // MARK: Interests Section
-    @State private var customInterestText: String = ""
 
     private var interestsSection: some View {
         let baseInterests: [(title: String, icon: String, color: Color)] = [
-            ("Гастрономия", "fork.knife", Color(red: 1.0, green: 0.4, blue: 0.4)),
-            ("История и музеи", "building.columns", Color(.systemGray)),
-            ("Ночная жизнь", "moon.fill", Color(red: 0.7, green: 0.4, blue: 0.9)),
-            ("Природа и виды", "mountain.2.fill", Color(red: 0.2, green: 0.7, blue: 0.7)),
+            ("Гастро", "fork.knife", Color(red: 1.0, green: 0.4, blue: 0.4)),
+            ("Пляж", "sun.max.fill", Color(red: 1.0, green: 0.8, blue: 0.3)),
+            ("Искусство", "paintpalette.fill", Color(red: 0.4, green: 0.6, blue: 1.0)),
             ("Шопинг", "bag.fill", Color(red: 0.95, green: 0.6, blue: 0.2)),
-            ("Кофейни и десерты", "cup.and.saucer.fill", Color(red: 0.9, green: 0.5, blue: 0.8)),
-            ("Современное искусство", "paintpalette.fill", Color(red: 0.4, green: 0.6, blue: 1.0)),
-            ("Архитектура и районы", "building.2.fill", Color(.systemIndigo)),
-            ("Пляж / вода", "sun.max.fill", Color(red: 1.0, green: 0.8, blue: 0.3)),
-            ("Активности и спорт", "figure.run", Color(red: 0.2, green: 0.7, blue: 0.4))
+            ("История", "building.columns", Color(.systemGray)),
+            ("Спорт", "figure.run", Color(red: 0.2, green: 0.7, blue: 0.4)),
+            ("Природа", "leaf.fill", Color(red: 0.2, green: 0.7, blue: 0.7)),
+            ("Горы", "mountain.2.fill", Color(.systemIndigo)),
+            ("Тусовки", "sparkles", Color(red: 0.7, green: 0.4, blue: 0.9))
         ]
-        
-        let baseTitles = Set(baseInterests.map { $0.title })
-        let customInterests = selectedInterests
-            .filter { !baseTitles.contains($0) }
-            .sorted()
-        
-        return VStack(alignment: .leading, spacing: 12) {
-            Text("ИНТЕРЕСЫ")
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundColor(Color(.secondaryLabel))
-                .textCase(.uppercase)
-            
-            Text("Выбери хотя бы 2–3, чтобы маршрут был точнее")
-                .font(.system(size: 13))
-                .foregroundColor(Color(.secondaryLabel))
-            
+
+        return VStack(alignment: .leading, spacing: 14) {
+            Text("Что вам интересно?")
+                .font(.system(size: 18, weight: .semibold, design: .rounded))
+                .foregroundColor(warmWhite)
+
             // Сетка с интересами (адаптивно, без перегрузки)
             LazyVGrid(
                 columns: [
+                    GridItem(.flexible(), spacing: 12),
                     GridItem(.flexible(), spacing: 12),
                     GridItem(.flexible(), spacing: 12)
                 ],
@@ -466,88 +366,7 @@ struct NewTripView: View {
                     }
                 }
             }
-            
-            // Свои интересы (чипы), если есть
-            if !customInterests.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Твои интересы")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(Color(.secondaryLabel))
-                    
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(customInterests, id: \.self) { interest in
-                                Button {
-                                    toggleInterest(interest)
-                                } label: {
-                                    HStack(spacing: 6) {
-                                        Text(interest)
-                                            .font(.system(size: 14, weight: .medium))
-                                        Image(systemName: "xmark")
-                                            .font(.system(size: 11, weight: .bold))
-                                    }
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 7)
-                                    .background(
-                                        Capsule()
-                                            .fill(Color(.systemGray5))
-                                    )
-                                    .foregroundColor(Color(.label))
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
-                }
-                .padding(.top, 4)
-            }
-            
-            // Поле "свой интерес"
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Или напиши что-то своё")
-                    .font(.system(size: 13))
-                    .foregroundColor(Color(.secondaryLabel))
-                
-                HStack(spacing: 8) {
-                    TextField("Например, «винные бары» или «футбол»", text: $customInterestText)
-                        .textInputAutocapitalization(.sentences)
-                        .disableAutocorrection(false)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color(.secondarySystemBackground))
-                        )
-                    
-                    Button {
-                        addCustomInterest()
-                    } label: {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.system(size: 22, weight: .semibold))
-                    }
-                    .foregroundColor(customInterestTextTrimmed.isEmpty ? Color(.tertiaryLabel) : Color(red: 0.2, green: 0.6, blue: 1.0))
-                    .disabled(customInterestTextTrimmed.isEmpty)
-                }
-            }
-            .padding(.top, 4)
         }
-    }
-
-    // MARK: - Interests helpers
-
-    private var customInterestTextTrimmed: String {
-        customInterestText.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func addCustomInterest() {
-        let value = customInterestTextTrimmed
-        guard !value.isEmpty else { return }
-        
-        // чтобы не плодить дубли
-        if !selectedInterests.contains(value) {
-            selectedInterests.insert(value)
-        }
-        customInterestText = ""
     }
 
     private func toggleInterest(_ interest: String) {
@@ -558,174 +377,188 @@ struct NewTripView: View {
         }
     }
 
+    // MARK: Info Card
+
+    private func infoCard(title: String, value: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(mutedWarmGray)
+
+                    Text(title)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundColor(mutedWarmGray)
+                        .textCase(.uppercase)
+                }
+
+                Text(value)
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundColor(warmWhite)
+                    .lineLimit(2)
+            }
+            .frame(maxWidth: .infinity, minHeight: 86, alignment: .leading)
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(glassFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(glassBorder, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: Budget Section
     
     private var budgetSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("УРОВЕНЬ БЮДЖЕТА")
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundColor(Color(.secondaryLabel))
-                .textCase(.uppercase)
-            
-            HStack(spacing: 12) {
-                BudgetButton(
-                    title: "Эконом",
-                    icon: "coloncurrencysign.circle.fill",
-                    isSelected: selectedBudget == "Эконом"
-                ) {
-                    selectedBudget = "Эконом"
-                }
-                
-                BudgetButton(
-                    title: "Комфорт",
-                    icon: "suitcase.fill",
-                    isSelected: selectedBudget == "Комфорт"
-                ) {
-                    selectedBudget = "Комфорт"
-                }
-                
-                BudgetButton(
-                    title: "Премиум",
-                    icon: "crown.fill",
-                    isSelected: selectedBudget == "Премиум"
-                ) {
-                    selectedBudget = "Премиум"
+        let budgets = ["Эконом", "Комфорт", "Люкс"]
+
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Бюджет")
+                .font(.system(size: 18, weight: .semibold, design: .rounded))
+                .foregroundColor(warmWhite)
+
+            HStack(spacing: 6) {
+                ForEach(budgets, id: \.self) { budget in
+                    let isSelected = selectedBudget == budget
+                    Button {
+                        selectedBudget = budget
+                    } label: {
+                        Text(budget)
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            .foregroundColor(isSelected ? warmWhite : mutedWarmGray)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background(
+                                Capsule()
+                                    .fill(Color.white.opacity(0.06))
+                                    .overlay(
+                                        Capsule()
+                                            .fill(
+                                                LinearGradient(
+                                                    colors: [
+                                                        Color.travelBuddyOrange.opacity(0.22),
+                                                        Color.travelBuddyOrange.opacity(0.08)
+                                                    ],
+                                                    startPoint: .topLeading,
+                                                    endPoint: .bottomTrailing
+                                                )
+                                            )
+                                            .opacity(isSelected ? 1 : 0)
+                                    )
+                            )
+                            .overlay(
+                                Capsule()
+                                    .stroke(isSelected ? Color.travelBuddyOrange : Color.white.opacity(0.14), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
                 }
             }
+            .padding(6)
+            .background(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(glassFill)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(glassBorder, lineWidth: 1)
+            )
         }
     }
     
-    // MARK: Wishes Section
-    
-    private var wishesSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("ПОЖЕЛАНИЯ К ПОЕЗДКЕ")
-                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                .foregroundColor(Color(.secondaryLabel))
-                .textCase(.uppercase)
-            
-            Text("Напиши в чате, что для тебя важно: темп поездки, стиль, ограничения, особые запросы.")
-                .font(.system(size: 14))
-                .foregroundColor(Color(.secondaryLabel))
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-    
-    // MARK: Inline Chat Section
-    
-    private var inlineChatSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Заголовок чата
-            HStack(spacing: 12) {
+    // MARK: Wishes Card
+
+    private var wishesCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
                 ZStack {
                     Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color(red: 1.0, green: 0.65, blue: 0.40),
-                                    Color(red: 1.0, green: 0.45, blue: 0.35)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 36, height: 36)
-                    
-                    Image(systemName: "mappin.circle.fill")
-                        .font(.system(size: 18, weight: .semibold))
+                        .fill(Color.travelBuddyOrange)
+                        .frame(width: 28, height: 28)
+
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(.white)
                 }
-                
-                Text("Чат с Travel Buddy")
-                    .font(.system(size: 17, weight: .semibold, design: .rounded))
-                    .foregroundColor(Color(.label))
-                
-                Spacer()
-                
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(Color.green)
-                        .frame(width: 8, height: 8)
-                    
-                    Text("Онлайн")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(Color(.secondaryLabel))
-                }
+
+                Text("Пожелания")
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .foregroundColor(warmWhite)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(Color.white)
-            
-            // Область сообщений
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        ForEach(chatMessages) { message in
-                            ChatBubbleView(message: message)
-                                .id(message.id)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 16)
-                }
-                .frame(maxHeight: 200)
-                .background(Color.white)
-                .onChange(of: chatMessages.count) { _ in
-                    if let lastMessage = chatMessages.last {
-                        withAnimation {
-                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
-                        }
-                    }
-                }
-            }
-            
-            // Поле ввода
+
+            Text("Опишите идеальное путешествие, и я подберу маршрут специально для вас.")
+                .font(.system(size: 13))
+                .foregroundColor(mutedWarmGray)
+                .fixedSize(horizontal: false, vertical: true)
+
             HStack(spacing: 10) {
-                TextField("Напиши свои пожелания к маршру", text: $messageText, axis: .vertical)
-                    .font(.system(size: 15))
-                    .padding(.horizontal, 14)
+                TextField("Хочу спокойный отдых...", text: $messageText, axis: .vertical)
+                    .font(.system(size: 14))
+                    .foregroundColor(warmWhite)
+                    .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                     .background(
-                        RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .fill(Color(.systemGray6))
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.white.opacity(0.06))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
                     )
                     .focused($isTextFieldFocused)
                     .lineLimit(1...3)
-                
-                Button(action: {
-                    // Placeholder для голосового ввода
-                }) {
-                    Image(systemName: "mic.fill")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(Color(.secondaryLabel))
-                        .frame(width: 36, height: 36)
-                }
-                .buttonStyle(.plain)
-                
+
                 Button {
                     sendMessage()
                 } label: {
-                    Image(systemName: "paperplane.fill")
-                        .font(.system(size: 16, weight: .semibold))
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 14, weight: .bold))
                         .foregroundColor(.white)
                         .frame(width: 36, height: 36)
                         .background(
                             Circle()
-                                .fill(Color(red: 1.0, green: 0.55, blue: 0.30))
+                                .fill(Color.travelBuddyOrange)
                         )
                 }
                 .buttonStyle(.plain)
                 .disabled(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 12)
-            .background(Color.white)
+
+            HStack(spacing: 8) {
+                ForEach(["Спокойный темп", "Без перелетов"], id: \.self) { tag in
+                    Button(action: {}) {
+                        Text(tag)
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundColor(mutedWarmGray)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                Capsule()
+                                    .fill(Color.white.opacity(0.06))
+                            )
+                            .overlay(
+                                Capsule()
+                                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
         }
+        .padding(16)
         .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(Color.white)
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(glassFill)
         )
-        .shadow(color: Color.black.opacity(0.08), radius: 12, x: 0, y: 4)
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(glassBorder, lineWidth: 1)
+        )
     }
     
     private func sendMessage() {
@@ -855,21 +688,12 @@ struct NewTripView: View {
                     .foregroundColor(.white)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 18)
+            .padding(.vertical, 16)
             .background(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 1.0, green: 0.65, blue: 0.40),
-                                Color(red: 1.0, green: 0.45, blue: 0.35)
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
+                Capsule()
+                    .fill(Color.travelBuddyOrange)
             )
-            .shadow(color: Color(red: 1.0, green: 0.45, blue: 0.35).opacity(0.3), radius: 12, x: 0, y: 6)
+            .shadow(color: Color.travelBuddyOrange.opacity(0.35), radius: 12, x: 0, y: 6)
         }
         .buttonStyle(.plain)
         .disabled(tripPlanViewModel?.isLoading == true)
@@ -976,6 +800,8 @@ struct NewTripView: View {
             "Paris": CLLocationCoordinate2D(latitude: 48.8566, longitude: 2.3522),
             "Барселона": CLLocationCoordinate2D(latitude: 41.3851, longitude: 2.1734),
             "Barcelona": CLLocationCoordinate2D(latitude: 41.3851, longitude: 2.1734),
+            "Нью-Йорк": CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060),
+            "New York": CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060),
         ]
 
         return cityCoordinates[city] ?? CLLocationCoordinate2D(latitude: 41.9028, longitude: 12.4964)
@@ -985,7 +811,7 @@ struct NewTripView: View {
         switch budget {
         case "Эконом": return "low"
         case "Комфорт": return "medium"
-        case "Премиум": return "high"
+        case "Премиум", "Люкс": return "high"
         default: return "medium"
         }
     }

@@ -11,6 +11,7 @@ import MapKit
 
 struct DestinationAutocompleteField: View {
     @Binding var cityName: String
+    var placeholder: String = "Введите город"
     var onCitySelected: ((CitySearchResult) -> Void)?
 
     @StateObject private var searchService = CitySearchService()
@@ -35,13 +36,9 @@ struct DestinationAutocompleteField: View {
 
     private var inputField: some View {
         HStack(spacing: 12) {
-            Image(systemName: "mappin.circle.fill")
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundColor(Color(red: 1.0, green: 0.55, blue: 0.30))
-
-            TextField("Введите город", text: $cityName)
+            TextField(placeholder, text: $cityName)
                 .font(.system(size: 17, weight: .medium))
-                .foregroundColor(Color(.label))
+                .foregroundColor(Color(red: 0.20, green: 0.18, blue: 0.16))
                 .focused($isFocused)
                 .onChange(of: cityName) { newValue in
                     searchService.search(query: newValue)
@@ -74,7 +71,7 @@ struct DestinationAutocompleteField: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 16))
-                        .foregroundColor(Color(.tertiaryLabel))
+                        .foregroundColor(Color.black.opacity(0.35))
                 }
                 .buttonStyle(.plain)
             }
@@ -83,7 +80,11 @@ struct DestinationAutocompleteField: View {
         .padding(.vertical, 14)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color(.systemGray6))
+                .fill(Color.white)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.4), lineWidth: 1)
         )
         .onChange(of: searchService.suggestions) { _ in
             updateSuggestionsVisibility()
@@ -110,8 +111,8 @@ struct DestinationAutocompleteField: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color(.systemBackground))
-                .shadow(color: Color.black.opacity(0.15), radius: 16, x: 0, y: 8)
+                .fill(Color(red: 0.18, green: 0.17, blue: 0.16))
+                .shadow(color: Color.black.opacity(0.35), radius: 16, x: 0, y: 8)
         )
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
@@ -120,24 +121,24 @@ struct DestinationAutocompleteField: View {
         HStack(spacing: 12) {
             ZStack {
                 Circle()
-                    .fill(Color(red: 1.0, green: 0.55, blue: 0.30).opacity(0.12))
+                    .fill(Color.white.opacity(0.08))
                     .frame(width: 40, height: 40)
 
                 Image(systemName: "mappin.circle.fill")
                     .font(.system(size: 18))
-                    .foregroundColor(Color(red: 1.0, green: 0.55, blue: 0.30))
+                    .foregroundColor(Color.travelBuddyOrange)
             }
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(result.name)
                     .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(Color(.label))
+                    .foregroundColor(Color.white)
                     .lineLimit(1)
 
                 if !result.country.isEmpty {
                     Text(result.country)
                         .font(.system(size: 13))
-                        .foregroundColor(Color(.secondaryLabel))
+                        .foregroundColor(Color.white.opacity(0.6))
                         .lineLimit(1)
                 }
             }
@@ -146,7 +147,7 @@ struct DestinationAutocompleteField: View {
 
             Image(systemName: "arrow.up.left")
                 .font(.system(size: 12, weight: .medium))
-                .foregroundColor(Color(.tertiaryLabel))
+                .foregroundColor(Color.white.opacity(0.4))
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -185,11 +186,11 @@ private struct EmptyStateView: View {
         HStack(spacing: 12) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 16))
-                .foregroundColor(Color(.tertiaryLabel))
+                .foregroundColor(Color.white.opacity(0.5))
 
             Text("Город не найден")
                 .font(.system(size: 14))
-                .foregroundColor(Color(.secondaryLabel))
+                .foregroundColor(Color.white.opacity(0.6))
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)

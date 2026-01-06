@@ -106,27 +106,33 @@ struct MainTabView: View {
             }
 
             NavigationStack {
-                ChatTabView()
-            }
-            .tabItem {
-                Image(systemName: "bubble.left.and.bubble.right.fill")
-                Text("Чат")
-            }
-
-            NavigationStack {
-                Text("Поездки")
+                Text("Поиск")
                     .font(.system(.title3, design: .rounded))
-                    .navigationTitle("Поездки")
+                    .foregroundColor(.primary)
+                    .navigationTitle("Поиск")
                     .navigationBarTitleDisplayMode(.inline)
             }
             .tabItem {
-                Image(systemName: "calendar")
-                Text("Поездки")
+                Image(systemName: "magnifyingglass")
+                Text("Поиск")
+            }
+
+            NavigationStack {
+                Text("Сохранено")
+                    .font(.system(.title3, design: .rounded))
+                    .foregroundColor(.primary)
+                    .navigationTitle("Сохранено")
+                    .navigationBarTitleDisplayMode(.inline)
+            }
+            .tabItem {
+                Image(systemName: "bookmark.fill")
+                Text("Сохранено")
             }
 
             NavigationStack {
                 Text("Профиль")
                     .font(.system(.title3, design: .rounded))
+                    .foregroundColor(.primary)
                     .navigationTitle("Профиль")
                     .navigationBarTitleDisplayMode(.inline)
             }
@@ -135,6 +141,10 @@ struct MainTabView: View {
                 Text("Профиль")
             }
         }
+        .tint(Color.travelBuddyOrange)
+        .toolbarBackground(Color(red: 0.14, green: 0.14, blue: 0.13), for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
+        .toolbarColorScheme(.dark, for: .tabBar)
     }
 }
 
@@ -143,7 +153,6 @@ struct MainTabView: View {
         HomeView()
     }
 }
-
 
 
 

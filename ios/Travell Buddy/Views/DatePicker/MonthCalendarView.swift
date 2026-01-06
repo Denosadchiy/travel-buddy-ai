@@ -16,6 +16,8 @@ struct MonthCalendarView: View {
     let onDateTap: (Date) -> Void
 
     private var calendar: Calendar { Calendar.current }
+    private let warmWhite = Color(red: 0.95, green: 0.94, blue: 0.92)
+    private let mutedWarmGray = Color(red: 0.70, green: 0.67, blue: 0.63)
 
     private var monthName: String {
         let formatter = DateFormatter()
@@ -52,7 +54,7 @@ struct MonthCalendarView: View {
             // Название месяца
             Text(monthName)
                 .font(.system(size: 20, weight: .bold, design: .rounded))
-                .foregroundColor(Color(.label))
+                .foregroundColor(warmWhite)
                 .padding(.horizontal, 4)
 
             // Дни недели
@@ -60,7 +62,7 @@ struct MonthCalendarView: View {
                 ForEach(["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"], id: \.self) { day in
                     Text(day)
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(Color(.secondaryLabel))
+                        .foregroundColor(mutedWarmGray)
                         .frame(maxWidth: .infinity)
                 }
             }

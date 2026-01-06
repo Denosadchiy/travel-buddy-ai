@@ -10,17 +10,22 @@ import SwiftUI
 struct PresetButton: View {
     let title: String
     let action: () -> Void
+    private let warmWhite = Color(red: 0.95, green: 0.94, blue: 0.92)
 
     var body: some View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 15, weight: .medium, design: .rounded))
-                .foregroundColor(Color(red: 0.2, green: 0.6, blue: 1.0))
+                .foregroundColor(warmWhite)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
                 .background(
                     Capsule()
-                        .fill(Color(red: 0.2, green: 0.6, blue: 1.0).opacity(0.1))
+                        .fill(Color.white.opacity(0.08))
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(Color.white.opacity(0.14), lineWidth: 1)
                 )
         }
         .buttonStyle(.plain)

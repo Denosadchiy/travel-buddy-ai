@@ -10,50 +10,74 @@ import SwiftUI
 struct MainActionCard: View {
     let title: String
     let subtitle: String
-    let gradient: Gradient
-    let systemImageName: String
-    
+    let ctaText: String
+    let leadingSystemImage: String
+    let trailingSystemImage: String
+
+    private let warmWhite = Color(red: 0.96, green: 0.95, blue: 0.93)
+    private let mutedWarmGray = Color(red: 0.72, green: 0.69, blue: 0.64)
+
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            // Цветной фон, похожий на макет
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        gradient: gradient,
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .shadow(color: Color.black.opacity(0.10), radius: 12, x: 0, y: 8)
-            
-            HStack(alignment: .top, spacing: 16) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(title)
-                        .font(.system(size: 20, weight: .semibold, design: .rounded))
-                        .foregroundColor(.white)
-                        .fixedSize(horizontal: false, vertical: true)
-                    
-                    Text(subtitle)
-                        .font(.system(size: 14, weight: .regular))
-                        .foregroundColor(.white.opacity(0.9))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                
-                Spacer()
-                
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(Color.white.opacity(0.25))
-                        .frame(width: 42, height: 48)
-                    
-                    Image(systemName: systemImageName)
-                        .font(.system(size: 20, weight: .semibold))
+                    Circle()
+                        .fill(Color.travelBuddyOrange.opacity(0.95))
+                        .frame(width: 42, height: 42)
+
+                    Image(systemName: leadingSystemImage)
+                        .font(.system(size: 18, weight: .semibold))
                         .foregroundColor(.white)
                 }
+
+                Spacer()
+
+                Circle()
+                    .fill(Color.white.opacity(0.10))
+                    .frame(width: 34, height: 34)
+                    .overlay(
+                        Image(systemName: trailingSystemImage)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(warmWhite.opacity(0.9))
+                    )
             }
-            .padding(18)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                    .foregroundColor(warmWhite)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(subtitle)
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundColor(mutedWarmGray)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack {
+                Spacer()
+
+                Text(ctaText)
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
+                    .background(
+                        Capsule()
+                            .fill(Color.travelBuddyOrange)
+                    )
+            }
         }
-        .frame(maxWidth: .infinity)
+        .padding(18)
+        .frame(maxWidth: .infinity, minHeight: 150, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(Color.white.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                )
+                .shadow(color: Color(red: 0.05, green: 0.04, blue: 0.04).opacity(0.25), radius: 14, x: 0, y: 10)
+        )
     }
 }
-

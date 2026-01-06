@@ -11,7 +11,7 @@ import SwiftUI
 
 extension Color {
     /// Primary orange color - используется для акцентов
-    static let travelBuddyOrange = Color(red: 1.0, green: 0.55, blue: 0.30)
+    static let travelBuddyOrange = Color(red: 1.0, green: 0.48, blue: 0.24)
 
     /// Secondary teal color - используется в градиентах
     static let travelBuddyTeal = Color(red: 0.05, green: 0.78, blue: 0.78)

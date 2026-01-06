@@ -7,12 +7,33 @@
 
 import SwiftUI
 import GoogleSignIn
+import UIKit
 
 /// Главная точка входа в приложение Travel Buddy.
 /// Показывает splash-экран, затем основное приложение с таб-баром.
 @main
 struct Travell_BuddyApp: App {
     @State private var showSplash: Bool = true
+
+    init() {
+        let tabBarAppearance = UITabBarAppearance()
+        tabBarAppearance.configureWithOpaqueBackground()
+        tabBarAppearance.backgroundColor = UIColor(red: 0.14, green: 0.14, blue: 0.13, alpha: 1.0)
+        tabBarAppearance.shadowColor = .clear
+
+        let itemAppearance = UITabBarItemAppearance()
+        itemAppearance.normal.iconColor = UIColor(white: 0.70, alpha: 1.0)
+        itemAppearance.normal.titleTextAttributes = [.foregroundColor: UIColor(white: 0.70, alpha: 1.0)]
+        itemAppearance.selected.iconColor = UIColor(red: 1.0, green: 0.46, blue: 0.21, alpha: 1.0)
+        itemAppearance.selected.titleTextAttributes = [.foregroundColor: UIColor(red: 1.0, green: 0.46, blue: 0.21, alpha: 1.0)]
+
+        tabBarAppearance.stackedLayoutAppearance = itemAppearance
+        tabBarAppearance.inlineLayoutAppearance = itemAppearance
+        tabBarAppearance.compactInlineLayoutAppearance = itemAppearance
+
+        UITabBar.appearance().standardAppearance = tabBarAppearance
+        UITabBar.appearance().scrollEdgeAppearance = tabBarAppearance
+    }
 
     var body: some Scene {
         WindowGroup {

@@ -33,6 +33,11 @@ struct DateRangePickerView: View {
     
     private let minDate: Date
     private let maxDate: Date   // уже приведён к "не дальше чем год вперёд"
+
+    private let warmWhite = Color(red: 0.95, green: 0.94, blue: 0.92)
+    private let mutedWarmGray = Color(red: 0.70, green: 0.67, blue: 0.63)
+    private let backgroundTop = Color(red: 0.25, green: 0.18, blue: 0.16)
+    private let backgroundBottom = Color(red: 0.15, green: 0.09, blue: 0.08)
     
     init(
         departureDate: Binding<Date?>,
@@ -86,25 +91,26 @@ struct DateRangePickerView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(.systemBackground)
-                    .ignoresSafeArea()
+                SmokyBackgroundView()
                 
                 VStack(spacing: 0) {
                     // Фиксированная панель с информацией о выбранных датах
                     dateInfoPanel
                         .padding(.horizontal, 20)
                         .padding(.vertical, 16)
-                        .background(Color(.systemBackground))
+                        .background(Color.clear)
                     
                     Divider()
+                        .overlay(Color.white.opacity(0.08))
                     
                     // Быстрые пресеты
                     presetsSection
                         .padding(.horizontal, 20)
                         .padding(.vertical, 12)
-                        .background(Color(.systemBackground))
+                        .background(Color.clear)
                     
                     Divider()
+                        .overlay(Color.white.opacity(0.08))
                     
                     // Шапка с выбором месяца/года
                     monthHeader
@@ -131,7 +137,7 @@ struct DateRangePickerView: View {
                     Button("Отмена") {
                         isPresented = false
                     }
-                    .foregroundColor(Color(.label))
+                    .foregroundColor(mutedWarmGray)
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -141,10 +147,12 @@ struct DateRangePickerView: View {
                         isPresented = false
                     }
                     .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(isBothDatesSelected ? Color(red: 0.2, green: 0.6, blue: 1.0) : Color(.tertiaryLabel))
+                    .foregroundColor(isBothDatesSelected ? Color.travelBuddyOrange : mutedWarmGray.opacity(0.6))
                     .disabled(!isBothDatesSelected)
                 }
             }
+            .toolbarBackground(backgroundTop, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
         }
         .presentationDetents([.large])
     }
@@ -157,46 +165,46 @@ struct DateRangePickerView: View {
                 HStack(spacing: 4) {
                     Text("Вы летите")
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(Color(.secondaryLabel))
+                        .foregroundColor(mutedWarmGray)
                     
                     Text(formatDate(departure))
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color(.label))
+                        .foregroundColor(warmWhite)
                     
                     Text("—")
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(Color(.secondaryLabel))
+                        .foregroundColor(mutedWarmGray)
                     
                     Text(formatDate(returnDate))
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color(.label))
+                        .foregroundColor(warmWhite)
                     
                     Text("·")
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(Color(.secondaryLabel))
+                        .foregroundColor(mutedWarmGray)
                     
                     Text(nightsCount(departure: departure, return: returnDate))
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color(red: 0.2, green: 0.6, blue: 1.0))
+                        .foregroundColor(Color.travelBuddyOrange)
                 }
             } else if let departure = selectedDeparture {
                 HStack(spacing: 4) {
                     Text("Вылет:")
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(Color(.secondaryLabel))
+                        .foregroundColor(mutedWarmGray)
                     
                     Text(formatDate(departure))
                         .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(Color(.label))
+                        .foregroundColor(warmWhite)
                     
                     Text("· Выберите дату возврата")
                         .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(Color(.secondaryLabel))
+                        .foregroundColor(mutedWarmGray)
                 }
             } else {
                 Text("Выберите дату вылета")
                     .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(Color(.secondaryLabel))
+                    .foregroundColor(mutedWarmGray)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -216,11 +224,6 @@ struct DateRangePickerView: View {
                     title: "На неделю",
                     action: { applyWeekPreset() }
                 )
-                
-                PresetButton(
-                    title: "±3 дня",
-                    action: { applyFlexiblePreset() }
-                )
             }
         }
     }
@@ -233,7 +236,7 @@ struct DateRangePickerView: View {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 17, weight: .semibold))
             }
-            .foregroundColor(canGoToPreviousMonth ? Color(.label) : Color(.tertiaryLabel))
+            .foregroundColor(canGoToPreviousMonth ? warmWhite : mutedWarmGray.opacity(0.5))
             .disabled(!canGoToPreviousMonth)
             
             Spacer()
@@ -259,7 +262,7 @@ struct DateRangePickerView: View {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 13, weight: .semibold))
                 }
-                .foregroundColor(Color(.label))
+                .foregroundColor(warmWhite)
             }
             
             Spacer()
@@ -268,7 +271,7 @@ struct DateRangePickerView: View {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 17, weight: .semibold))
             }
-            .foregroundColor(canGoToNextMonth ? Color(.label) : Color(.tertiaryLabel))
+            .foregroundColor(canGoToNextMonth ? warmWhite : mutedWarmGray.opacity(0.5))
             .disabled(!canGoToNextMonth)
         }
         .padding(.horizontal, 20)
@@ -445,15 +448,14 @@ struct DateRangePickerView: View {
     private func applyWeekendPreset() {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
-        
-        var friday = today
+        let baseDate = max(today, minDate)
+        var friday = baseDate
         // Пятница = 6 (при стандартной локали: 1 — воскресенье)
         while calendar.component(.weekday, from: friday) != 6 {
             guard let next = calendar.date(byAdding: .day, value: 1, to: friday) else { break }
             friday = next
         }
-        
-        let departure = max(friday, minDate)
+        let departure = friday
         if departure > maxDate { return } // выходные вне диапазона
         
         var sunday = calendar.date(byAdding: .day, value: 2, to: departure) ?? departure
@@ -473,22 +475,6 @@ struct DateRangePickerView: View {
         if start > maxDate { start = maxDate }
         
         var end = calendar.date(byAdding: .day, value: 7, to: start) ?? start
-        if end > maxDate { end = maxDate }
-        
-        withAnimation {
-            selectedDeparture = start
-            selectedReturn = end
-        }
-    }
-    
-    private func applyFlexiblePreset() {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        
-        var start = selectedDeparture ?? max(today, minDate)
-        if start > maxDate { start = maxDate }
-        
-        var end = calendar.date(byAdding: .day, value: 3, to: start) ?? start
         if end > maxDate { end = maxDate }
         
         withAnimation {

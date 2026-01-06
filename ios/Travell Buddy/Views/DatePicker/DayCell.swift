@@ -16,6 +16,8 @@ struct DayCell: View {
     let onTap: () -> Void
 
     private var calendar: Calendar { Calendar.current }
+    private let warmWhite = Color(red: 0.95, green: 0.94, blue: 0.92)
+    private let mutedWarmGray = Color(red: 0.70, green: 0.67, blue: 0.63)
 
     private var isToday: Bool {
         calendar.isDateInToday(date)
@@ -51,42 +53,24 @@ struct DayCell: View {
     var body: some View {
         Button(action: onTap) {
             ZStack {
-                // Фон диапазона (полная ширина)
-                if isInRange && !isRangeStart && !isRangeEnd {
+                // Фон диапазона (сплошная линия между днями)
+                if isInRange {
                     Rectangle()
-                        .fill(Color(red: 0.2, green: 0.6, blue: 1.0).opacity(0.15))
-                }
-
-                // Левая половина для начала диапазона
-                if isRangeStart && returnDate != nil {
-                    HStack(spacing: 0) {
-                        Rectangle()
-                            .fill(Color(red: 0.2, green: 0.6, blue: 1.0).opacity(0.15))
-                        Spacer()
-                    }
-                }
-
-                // Правая половина для конца диапазона
-                if isRangeEnd && departureDate != nil {
-                    HStack(spacing: 0) {
-                        Spacer()
-                        Rectangle()
-                            .fill(Color(red: 0.2, green: 0.6, blue: 1.0).opacity(0.15))
-                    }
+                        .fill(Color.travelBuddyOrange.opacity(0.18))
                 }
 
                 // Круг для выбранных дат
                 if isDeparture || isReturn {
                     Circle()
-                        .fill(Color(red: 0.2, green: 0.6, blue: 1.0))
+                        .fill(Color.travelBuddyOrange)
                         .frame(width: 36, height: 36)
-                        .shadow(color: Color(red: 0.2, green: 0.6, blue: 1.0).opacity(0.3), radius: 4, x: 0, y: 2)
+                        .shadow(color: Color.travelBuddyOrange.opacity(0.35), radius: 4, x: 0, y: 2)
                 }
 
                 // Подсветка сегодняшнего дня (если не выбран)
                 if isToday && !isDeparture && !isReturn {
                     Circle()
-                        .stroke(Color(red: 0.2, green: 0.6, blue: 1.0), lineWidth: 1.5)
+                        .stroke(Color.travelBuddyOrange, lineWidth: 1.5)
                         .frame(width: 36, height: 36)
                 }
 
@@ -94,10 +78,10 @@ struct DayCell: View {
                 Text("\(calendar.component(.day, from: date))")
                     .font(.system(size: 16, weight: isDeparture || isReturn ? .semibold : .regular))
                     .foregroundColor(
-                        isDisabled ? Color(.tertiaryLabel) :
+                        isDisabled ? mutedWarmGray.opacity(0.45) :
                         isDeparture || isReturn ? .white :
-                        isToday ? Color(red: 0.2, green: 0.6, blue: 1.0) :
-                        Color(.label)
+                        isToday ? Color.travelBuddyOrange :
+                        warmWhite
                     )
             }
             .frame(height: 44)
