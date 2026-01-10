@@ -7,6 +7,7 @@ Supports two modes:
 2. Smart mode: Macro Plan → Smart Route Optimization (integrated POI + routing)
 """
 import logging
+import time
 from uuid import UUID
 from collections import Counter
 
@@ -71,6 +72,12 @@ class TripPlannerOrchestrator:
         if not trip_spec:
             raise ValueError(f"Trip {trip_id} not found")
 
+        start_ts = time.monotonic()
+        deadline_ts = start_ts + settings.planning_deadline_seconds
+
+        def remaining_seconds() -> float:
+            return max(0.0, deadline_ts - time.monotonic())
+
         # 2. Generate macro plan if missing
         macro_plan = await self.macro_planner.get_macro_plan(trip_id, db)
         if not macro_plan:
@@ -79,7 +86,14 @@ class TripPlannerOrchestrator:
 
         # 2b. Build preference profile once (POI agent)
         preference_agent = POIPreferenceAgent(app_settings=settings)
-        preference_profile = await preference_agent.build_profile(trip_spec)
+        pref_timeout = min(
+            float(settings.poi_preference_llm_timeout_seconds),
+            remaining_seconds(),
+        )
+        preference_profile = await preference_agent.build_profile(
+            trip_spec,
+            timeout_seconds=pref_timeout,
+        )
 
         # 3. Choose routing mode
         if settings.enable_smart_routing:
@@ -89,6 +103,7 @@ class TripPlannerOrchestrator:
                 trip_id,
                 db,
                 preference_profile=preference_profile,
+                deadline_ts=deadline_ts,
             )
         else:
             # Classic mode: separate POI plan + route optimization

@@ -6,6 +6,7 @@ then applies deterministic scoring to keep POIs aligned with user intent
 and geographic coherence.
 """
 import json
+import asyncio
 import logging
 import math
 from dataclasses import dataclass, field
@@ -18,6 +19,70 @@ from src.infrastructure.llm_client import LLMClient, get_poi_selection_llm_clien
 from src.infrastructure.poi_providers import haversine_distance_km
 
 logger = logging.getLogger(__name__)
+
+CATEGORY_ALIASES = [
+    ("fine dining", "restaurant"),
+    ("seafood", "restaurant"),
+    ("tapas", "restaurant"),
+    ("cuisine", "restaurant"),
+    ("restaurant", "restaurant"),
+    ("cafe", "cafe"),
+    ("coffee", "cafe"),
+    ("bakery", "bakery"),
+    ("breakfast", "cafe"),
+    ("bar", "bar"),
+    ("pub", "bar"),
+    ("brewery", "bar"),
+    ("nightclub", "nightlife"),
+    ("club", "nightlife"),
+    ("live music", "nightlife"),
+    ("nightlife", "nightlife"),
+    ("museum", "museum"),
+    ("gallery", "museum"),
+    ("art", "museum"),
+    ("history", "attraction"),
+    ("historical", "attraction"),
+    ("architecture", "attraction"),
+    ("landmark", "attraction"),
+    ("monument", "attraction"),
+    ("sightseeing", "attraction"),
+    ("attraction", "attraction"),
+    ("park", "park"),
+    ("nature", "park"),
+    ("viewpoint", "park"),
+    ("garden", "park"),
+    ("shopping", "shopping"),
+    ("market", "shopping"),
+    ("boutique", "shopping"),
+    ("spa", "wellness"),
+    ("wellness", "wellness"),
+    ("gym", "wellness"),
+]
+VALID_CATEGORIES = {
+    "restaurant",
+    "cafe",
+    "bar",
+    "bakery",
+    "food",
+    "museum",
+    "attraction",
+    "park",
+    "shopping",
+    "wellness",
+    "nightlife",
+}
+
+
+def normalize_category(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    raw = str(value).strip().lower()
+    if raw in VALID_CATEGORIES:
+        return raw
+    for keyword, mapped in CATEGORY_ALIASES:
+        if keyword in raw:
+            return mapped
+    return None
 
 
 @dataclass
@@ -77,9 +142,15 @@ IMPORTANT: category_boosts mapping rules:
             self._llm_client = get_poi_selection_llm_client(self._settings)
         return self._llm_client
 
-    async def build_profile(self, trip_spec: TripResponse) -> POIPreferenceProfile:
+    async def build_profile(
+        self,
+        trip_spec: TripResponse,
+        timeout_seconds: Optional[float] = None,
+    ) -> POIPreferenceProfile:
         """Build a preference profile for the trip."""
         if not self._settings.use_llm_for_poi_preferences:
+            return self._build_heuristic_profile(trip_spec)
+        if timeout_seconds is not None and timeout_seconds <= 0:
             return self._build_heuristic_profile(trip_spec)
 
         # Convert structured preferences to a dict for the prompt
@@ -112,10 +183,18 @@ Return JSON with this exact schema:
 }}"""
 
         try:
-            response = await self.llm_client.generate_structured(
-                prompt=prompt,
-                system_prompt=self.SYSTEM_PROMPT,
-                max_tokens=512,
+            timeout = (
+                timeout_seconds
+                if timeout_seconds is not None
+                else float(self._settings.poi_preference_llm_timeout_seconds)
+            )
+            response = await asyncio.wait_for(
+                self.llm_client.generate_structured(
+                    prompt=prompt,
+                    system_prompt=self.SYSTEM_PROMPT,
+                    max_tokens=512,
+                ),
+                timeout=timeout,
             )
             profile = self._parse_profile_response(response, trip_spec)
             # Make sure to carry over the structured preferences
@@ -287,8 +366,12 @@ def score_candidate(
         matches = True
         if sp.keyword and sp.keyword.lower() not in haystack:
             matches = False
-        if sp.category and sp.category.lower() not in candidate.category.lower():
-            matches = False
+        sp_category = normalize_category(sp.category)
+        if sp_category:
+            candidate_category = (candidate.category or "").lower()
+            if sp_category not in candidate_category:
+                if not candidate.tags or not any(sp_category == tag.lower() for tag in candidate.tags):
+                    matches = False
         
         price_map = {"cheap": [0,1], "moderate": [2], "expensive": [3,4]}
         if sp.price_level and candidate.price_level is not None:
@@ -351,10 +434,11 @@ def filter_candidates_for_block(
         BlockType.NIGHTLIFE: ["bar", "nightclub"],
     }
     
-    applicable_sp = [
-        sp for sp in profile.structured_preferences 
-        if sp.category in block_category_map.get(block_type, [])
-    ]
+    applicable_sp = []
+    for sp in profile.structured_preferences:
+        normalized = normalize_category(sp.category)
+        if normalized and normalized in block_category_map.get(block_type, []):
+            applicable_sp.append(sp)
 
     if applicable_sp:
         matched = []

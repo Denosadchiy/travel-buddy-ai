@@ -96,6 +96,30 @@ class Settings(BaseSettings):
         default=15,
         description="Maximum candidates to send to LLM for POI selection (cost control)"
     )
+    poi_preference_llm_timeout_seconds: int = Field(
+        default=6,
+        description="Timeout for POI preference LLM call"
+    )
+    curator_llm_timeout_seconds: int = Field(
+        default=8,
+        description="Timeout for curator LLM directive generation"
+    )
+    day_level_selection_llm_timeout_seconds: int = Field(
+        default=6,
+        description="Timeout for day-level POI selection LLM"
+    )
+    route_engineer_llm_timeout_seconds: int = Field(
+        default=6,
+        description="Timeout for route engineer LLM calls"
+    )
+    curator_model: str = Field(
+        default="",
+        description="Optional model override for POI curator (defaults to trip_planning_model)"
+    )
+    route_engineer_model: str = Field(
+        default="",
+        description="Optional model override for route engineer (defaults to trip_planning_model)"
+    )
 
     # Preference profile generation for POI scoring
     use_llm_for_poi_preferences: bool = Field(
@@ -156,7 +180,6 @@ class Settings(BaseSettings):
         default=True,
         description="Use day-level LLM selection in agentic pipeline"
     )
-
 
     # Day-level LLM selection for POIs (selects one candidate per block)
     enable_day_level_poi_selection: bool = Field(

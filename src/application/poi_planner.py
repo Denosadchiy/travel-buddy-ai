@@ -10,8 +10,12 @@ The LLM mode is enabled via USE_LLM_FOR_POI_SELECTION config flag.
 When enabled, the LLM can ONLY choose from deterministically-filtered candidates.
 """
 import logging
+import asyncio
+import time
 from uuid import UUID
 from typing import Optional
+from dataclasses import dataclass, field
+from collections import Counter, defaultdict
 from datetime import datetime
 from dataclasses import dataclass, field
 
@@ -37,6 +41,10 @@ from src.application.poi_agent import (
     filter_candidates_for_block,
 )
 from src.infrastructure.poi_providers import POIProvider, get_poi_provider, haversine_distance_km
+from src.infrastructure.llm_client import (
+    get_curator_llm_client,
+    get_poi_selection_llm_client,
+)
 from src.infrastructure.models import ItineraryModel
 from src.domain.models import POICandidate
 
@@ -634,7 +642,6 @@ class POIPlanner:
             created_at=itinerary_model.poi_plan_created_at.isoformat() + "Z"
             if itinerary_model.poi_plan_created_at else datetime.utcnow().isoformat() + "Z",
         )
-
 
 
 @dataclass

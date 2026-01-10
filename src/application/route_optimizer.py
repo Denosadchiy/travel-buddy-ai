@@ -14,10 +14,10 @@ Features:
 - [Smart mode] Groups POIs by districts for logical walking routes
 """
 import logging
+import asyncio
 import json
 import itertools
 import time
-import asyncio
 from uuid import UUID
 from typing import Optional
 from datetime import datetime
@@ -31,14 +31,22 @@ from src.domain.models import ItineraryDay, ItineraryBlock, POICandidate, BlockT
 from src.domain.schemas import POIPlanBlock, ItineraryResponse
 from src.application.trip_spec import TripSpecCollector
 from src.application.macro_planner import MacroPlanner
+from src.application.poi_selection_llm import (
+    POISelectionLLMService,
+    DayContext,
+    BlockContext,
+    build_trip_context_from_response,
+)
 from src.application.poi_agent import (
     POIPreferenceAgent,
     POIPreferenceProfile,
     score_candidate,
     filter_candidates_for_block,
+    normalize_category,
 )
+from src.application.poi_planner import POICuratorAgent, SearchDirective
 from src.infrastructure.travel_time import TravelTimeProvider, TravelLocation, get_travel_time_provider
-from src.infrastructure.llm_client import LLMClient, get_poi_selection_llm_client
+from src.infrastructure.llm_client import LLMClient, get_route_engineer_llm_client
 from src.infrastructure.poi_providers import haversine_distance_km
 from src.infrastructure.models import ItineraryModel
 from src.application.poi_selection_llm import (
@@ -93,6 +101,7 @@ class RouteTimeOptimizer:
 
     ROUTE_ORDER_SYSTEM_PROMPT = """You are a route ordering assistant.
 Reorder the given blocks to minimize walking distance between consecutive POIs.
+Use the algorithmic suggestions as hints, but you may override them if needed.
 You must include every block exactly once and return only JSON."""
 
     def __init__(
@@ -112,6 +121,7 @@ You must include every block exactly once and return only JSON."""
         self.trip_spec_collector = TripSpecCollector()
         self.macro_planner = MacroPlanner()
         self._route_order_llm_client: Optional[LLMClient] = None
+        self._poi_selection_llm: Optional[POISelectionLLMService] = None
 
     def _block_needs_poi(self, block_type: BlockType) -> bool:
         """Check if a block type needs a POI."""
@@ -478,7 +488,7 @@ You must include every block exactly once and return only JSON."""
         if self._route_order_llm_client is not None:
             return self._route_order_llm_client
         try:
-            self._route_order_llm_client = get_poi_selection_llm_client(self._settings)
+            self._route_order_llm_client = get_route_engineer_llm_client(self._settings)
         except Exception as exc:
             logger.warning(f"Route ordering LLM unavailable, using deterministic: {exc}")
             self._route_order_llm_client = None
@@ -655,7 +665,6 @@ You must include every block exactly once and return only JSON."""
                         improved = True
         return best
 
-
     def _build_route_order_prompt(
         self,
         cluster_blocks: list[BlockWithPOI],
@@ -690,12 +699,26 @@ You must include every block exactly once and return only JSON."""
             } if next_poi and next_poi.lat is not None and next_poi.lon is not None else None,
         }
 
+        suggested_order, suggested_cost = self._suggest_cluster_order(
+            cluster_blocks=cluster_blocks,
+            prev_poi=prev_poi,
+            next_poi=next_poi,
+        )
+
+        suggestion_payload = {
+            "suggested_order_indices": suggested_order,
+            "suggested_cost_km": round(suggested_cost, 2),
+        }
+
         prompt = f"""Order these blocks to minimize walking distance.
 
 Anchors (optional):
 {json.dumps(anchor_payload, indent=2)}
 
 Max hop distance (km): {self._settings.max_hop_distance_km}
+
+Algorithmic hints:
+{json.dumps(suggestion_payload, indent=2)}
 
 Blocks:
 ```json
@@ -755,12 +778,18 @@ Return JSON only:
         )
 
         try:
-            response = await llm_client.generate_structured(
-                prompt=prompt,
-                system_prompt=self.ROUTE_ORDER_SYSTEM_PROMPT,
-                max_tokens=256,
+            response = await asyncio.wait_for(
+                llm_client.generate_structured(
+                    prompt=prompt,
+                    system_prompt=self.ROUTE_ORDER_SYSTEM_PROMPT,
+                    max_tokens=256,
+                ),
+                timeout=6,
             )
             return self._parse_route_order_response(response, cluster_blocks)
+        except asyncio.TimeoutError:
+            logger.warning("Route ordering LLM timed out, using deterministic.")
+            return None
         except Exception as exc:
             logger.warning(f"Route ordering LLM failed, using deterministic: {exc}")
             return None
@@ -861,6 +890,7 @@ Return JSON only:
     async def _optimize_day_route_llm(
         self,
         blocks: list[BlockWithPOI],
+        deadline_ts: Optional[float] = None,
     ) -> list[BlockWithPOI]:
         """Optimize daily route with optional LLM ordering per cluster."""
         if not self._settings.enable_daily_route_optimization:
@@ -885,11 +915,22 @@ Return JSON only:
                 and cluster_size >= 3
                 and cluster_size <= max_cluster_size
             ):
-                llm_order = await self._llm_optimize_cluster_order(
-                    cluster_blocks,
-                    prev_poi,
-                    next_poi,
-                )
+                if deadline_ts is not None:
+                    remaining = deadline_ts - time.monotonic()
+                    if remaining <= float(self._settings.route_engineer_llm_timeout_seconds):
+                        llm_order = None
+                    else:
+                        llm_order = await self._llm_optimize_cluster_order(
+                            cluster_blocks,
+                            prev_poi,
+                            next_poi,
+                        )
+                else:
+                    llm_order = await self._llm_optimize_cluster_order(
+                        cluster_blocks,
+                        prev_poi,
+                        next_poi,
+                    )
 
             if llm_order:
                 llm_cost = self._calculate_cluster_travel_cost(
@@ -2036,6 +2077,7 @@ Return JSON only:
         trip_id: UUID,
         db: AsyncSession,
         preference_profile: Optional["POIPreferenceProfile"] = None,
+        deadline_ts: Optional[float] = None,
     ) -> ItineraryResponse:
         """
         Generate itinerary using smart district-based routing.
@@ -2057,6 +2099,15 @@ Return JSON only:
             return await self.generate_itinerary(trip_id, db)
 
         try:
+            if self._settings.enable_agentic_planning:
+                logger.info(f"Using agentic Curator/Engineer routing for trip {trip_id}")
+                return await self.generate_agentic_itinerary(
+                    trip_id,
+                    db,
+                    preference_profile=preference_profile,
+                    deadline_ts=deadline_ts,
+                )
+
             # Import here to avoid circular imports
             from src.application.smart_route_optimizer import SmartRouteOptimizer
 
@@ -2075,23 +2126,26 @@ Return JSON only:
         except Exception as e:
             import traceback
             logger.warning(
-                f"Smart routing failed for trip {trip_id}, falling back to classic: {e}"
+                f"Smart routing failed for trip {trip_id}, falling back to smart optimizer: {e}"
             )
             logger.error(f"Full traceback:\n{traceback.format_exc()}")
 
-            # Fallback to classic pipeline: generate POI plan first, then itinerary
-            from src.application.poi_planner import POIPlanner
+            # Fallback to smart route optimizer first
+            try:
+                from src.application.smart_route_optimizer import SmartRouteOptimizer
 
-            poi_planner = POIPlanner()
-
-            # Check if POI plan exists, generate if not
-            poi_plan = await poi_planner.get_poi_plan(trip_id, db)
-            if not poi_plan:
-                logger.info(f"Generating POI plan for fallback (trip {trip_id})")
-                poi_plan = await poi_planner.generate_poi_plan(
+                smart_optimizer = SmartRouteOptimizer(
+                    travel_time_provider=self.travel_time_provider,
+                    app_settings=self._settings,
+                )
+                return await smart_optimizer.generate_smart_itinerary(
                     trip_id,
                     db,
                     preference_profile=preference_profile,
                 )
-
-            return await self.generate_itinerary(trip_id, db, preference_profile=preference_profile)
+            except Exception as fallback_error:
+                logger.warning(
+                    f"Smart optimizer failed for trip {trip_id}, falling back to classic: {fallback_error}"
+                )
+                logger.error(f"Full traceback:\n{traceback.format_exc()}")
+                return await self.generate_itinerary(trip_id, db, preference_profile=preference_profile)
