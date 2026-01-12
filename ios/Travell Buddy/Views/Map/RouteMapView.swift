@@ -4,6 +4,7 @@
 //
 //  Map view displaying POI annotations and route polylines for a trip day.
 //  Uses MKMapView via UIViewRepresentable to support overlay rendering.
+//  Supports annotation clustering to prevent POI overlap at far zoom levels.
 //
 //  Discovery note: Existing LiveGuideView uses SwiftUI Map for user location tracking.
 //  This is a different use case requiring polyline overlays, so we use MKMapView directly.
@@ -13,6 +14,7 @@ import SwiftUI
 import MapKit
 
 /// A map view that displays POI pins and route polylines for trip activities.
+/// Includes clustering support for dense POI areas.
 struct RouteMapView: UIViewRepresentable {
     let activities: [TripActivity]
 
@@ -21,6 +23,17 @@ struct RouteMapView: UIViewRepresentable {
         mapView.delegate = context.coordinator
         mapView.showsUserLocation = false
         mapView.mapType = .standard
+
+        // Register annotation views for clustering
+        mapView.register(
+            ClusteredPOIAnnotationView.self,
+            forAnnotationViewWithReuseIdentifier: MKMapViewDefaultAnnotationViewReuseIdentifier
+        )
+        mapView.register(
+            POIClusterAnnotationView.self,
+            forAnnotationViewWithReuseIdentifier: MKMapViewDefaultClusterAnnotationViewReuseIdentifier
+        )
+
         return mapView
     }
 
@@ -142,24 +155,131 @@ struct RouteMapView: UIViewRepresentable {
             // Don't customize user location
             if annotation is MKUserLocation { return nil }
 
-            guard let poiAnnotation = annotation as? POIAnnotation else { return nil }
-
-            let identifier = "POIAnnotation"
-            var annotationView = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? MKMarkerAnnotationView
-
-            if annotationView == nil {
-                annotationView = MKMarkerAnnotationView(annotation: annotation, reuseIdentifier: identifier)
-                annotationView?.canShowCallout = true
-            } else {
-                annotationView?.annotation = annotation
+            // Handle cluster annotation
+            if let cluster = annotation as? MKClusterAnnotation {
+                let view = mapView.dequeueReusableAnnotationView(
+                    withIdentifier: MKMapViewDefaultClusterAnnotationViewReuseIdentifier,
+                    for: annotation
+                ) as? POIClusterAnnotationView
+                view?.configure(with: cluster.memberAnnotations.count)
+                return view
             }
 
-            // Customize marker appearance
-            annotationView?.markerTintColor = UIColor(Color.travelBuddyOrange)
-            annotationView?.glyphText = "\(poiAnnotation.index + 1)"
+            // Handle POI annotation
+            guard let poiAnnotation = annotation as? POIAnnotation else { return nil }
 
-            return annotationView
+            let view = mapView.dequeueReusableAnnotationView(
+                withIdentifier: MKMapViewDefaultAnnotationViewReuseIdentifier,
+                for: annotation
+            ) as? ClusteredPOIAnnotationView
+            view?.configure(with: poiAnnotation)
+            return view
         }
+
+        // MARK: - Cluster Tap → Auto-Zoom
+
+        func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
+            guard let cluster = view.annotation as? MKClusterAnnotation else { return }
+
+            // Zoom to show all member annotations
+            mapView.showAnnotations(cluster.memberAnnotations, animated: true)
+
+            // Deselect after zoom
+            mapView.deselectAnnotation(cluster, animated: false)
+        }
+    }
+}
+
+// MARK: - Clustered POI Annotation View
+
+/// Custom annotation view for POI markers with clustering support.
+final class ClusteredPOIAnnotationView: MKMarkerAnnotationView {
+
+    static let clusteringIdentifier = "poi"
+
+    override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
+        super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
+        clusteringIdentifier = Self.clusteringIdentifier
+        displayPriority = .defaultHigh
+        canShowCallout = true
+    }
+
+    required init?(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(with poiAnnotation: POIAnnotation) {
+        annotation = poiAnnotation
+        markerTintColor = UIColor(Color.travelBuddyOrange)
+        glyphText = "\(poiAnnotation.index + 1)"
+    }
+}
+
+// MARK: - POI Cluster Annotation View
+
+/// Custom annotation view for POI clusters.
+final class POIClusterAnnotationView: MKAnnotationView {
+
+    private let countLabel: UILabel = {
+        let label = UILabel()
+        label.textAlignment = .center
+        label.font = .systemFont(ofSize: 14, weight: .bold)
+        label.textColor = .white
+        label.translatesAutoresizingMaskIntoConstraints = false
+        return label
+    }()
+
+    private let backgroundCircle: UIView = {
+        let view = UIView()
+        view.backgroundColor = UIColor(Color.travelBuddyOrange)
+        view.layer.borderColor = UIColor.white.cgColor
+        view.layer.borderWidth = 2
+        view.translatesAutoresizingMaskIntoConstraints = false
+        return view
+    }()
+
+    override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
+        super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
+        setupView()
+    }
+
+    required init?(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func setupView() {
+        displayPriority = .required
+        collisionMode = .circle
+
+        addSubview(backgroundCircle)
+        addSubview(countLabel)
+
+        let size: CGFloat = 40
+
+        NSLayoutConstraint.activate([
+            backgroundCircle.widthAnchor.constraint(equalToConstant: size),
+            backgroundCircle.heightAnchor.constraint(equalToConstant: size),
+            backgroundCircle.centerXAnchor.constraint(equalTo: centerXAnchor),
+            backgroundCircle.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            countLabel.centerXAnchor.constraint(equalTo: backgroundCircle.centerXAnchor),
+            countLabel.centerYAnchor.constraint(equalTo: backgroundCircle.centerYAnchor),
+        ])
+
+        backgroundCircle.layer.cornerRadius = size / 2
+
+        frame = CGRect(x: 0, y: 0, width: size, height: size)
+        centerOffset = CGPoint(x: 0, y: -size / 2)
+
+        // Add shadow
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOffset = CGSize(width: 0, height: 2)
+        layer.shadowRadius = 4
+        layer.shadowOpacity = 0.3
+    }
+
+    func configure(with count: Int) {
+        countLabel.text = "\(count)"
     }
 }
 

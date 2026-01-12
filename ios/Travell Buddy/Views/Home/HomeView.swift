@@ -74,6 +74,7 @@ struct HomeView: View {
             }
         }
         .navigationBarHidden(true)
+        .toolbar(.hidden, for: .tabBar)
         .sheet(isPresented: $showAccountSheet) {
             AccountSheet()
         }

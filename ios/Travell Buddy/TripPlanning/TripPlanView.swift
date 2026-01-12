@@ -125,10 +125,22 @@ struct TripPlanView: View {
                 PlaceDetailsView(placeId: placeId, fallbackPlace: place)
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
+                    .presentationCornerRadius(28)
+                    .presentationBackground(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.14, green: 0.08, blue: 0.06),
+                                Color(red: 0.10, green: 0.06, blue: 0.04)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
             } else {
                 MissingPlaceIdView(placeName: place.name)
                     .presentationDetents([.medium])
                     .presentationDragIndicator(.visible)
+                    .presentationCornerRadius(28)
             }
         }
         .onChange(of: isShowingEditDay) { newValue in

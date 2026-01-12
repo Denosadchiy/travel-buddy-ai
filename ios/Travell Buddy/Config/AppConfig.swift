@@ -15,8 +15,8 @@ enum APIEnvironment {
     var baseURL: URL {
         switch self {
         case .development:
-            // FastAPI dev server running on the same LAN as a physical device.
-            return URL(string: "http://192.168.0.110:8000/api")!
+            // FastAPI dev server running locally in Docker
+            return URL(string: "http://localhost:8000/api")!
         case .staging:
             return URL(string: "https://staging-api.travelbuddy.com/api")!
         case .production:

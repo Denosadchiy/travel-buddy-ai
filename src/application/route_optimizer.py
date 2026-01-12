@@ -49,16 +49,6 @@ from src.infrastructure.travel_time import TravelTimeProvider, TravelLocation, g
 from src.infrastructure.llm_client import LLMClient, get_route_engineer_llm_client
 from src.infrastructure.poi_providers import haversine_distance_km
 from src.infrastructure.models import ItineraryModel
-from src.application.poi_selection_llm import (
-    POISelectionLLMService,
-    TripContext,
-    DayContext,
-    BlockContext,
-    build_trip_context_from_response,
-    normalize_category,
-)
-from src.application.poi_planner import SearchDirective
-from src.application.poi_curator import POICuratorAgent
 
 logger = logging.getLogger(__name__)
 
