@@ -11,8 +11,10 @@ struct TripPlanView: View {
     @ObservedObject var viewModel: TripPlanViewModel
     @State private var isShowingGuide: Bool = false
     @State private var isShowingEditDay: Bool = false
+    @State private var isShowingAIStudio: Bool = false
     @State private var isShowingChat: Bool = false
     @State private var editViewModel: EditDayViewModel?
+    @State private var aiStudioViewModel: AIStudioViewModel?
     @State private var chatViewModel: ChatViewModel?
     @State private var selectedPlace: Place?
     @State private var showPaywall: Bool = false
@@ -52,6 +54,7 @@ struct TripPlanView: View {
                     guideCTA(height: ctaHeight)
                 }
                 .background(editDayNavigationLink)
+                .background(aiStudioNavigationLink)
                 .background(guideNavigationLink)
             } else if viewModel.isLoading {
                 VStack(spacing: 16) {
@@ -146,6 +149,11 @@ struct TripPlanView: View {
         .onChange(of: isShowingEditDay) { newValue in
             if !newValue {
                 editViewModel = nil
+            }
+        }
+        .onChange(of: isShowingAIStudio) { newValue in
+            if !newValue {
+                aiStudioViewModel = nil
             }
         }
         .onChange(of: isShowingChat) { newValue in
@@ -752,6 +760,21 @@ struct TripPlanView: View {
         .hidden()
     }
 
+    private var aiStudioNavigationLink: some View {
+        NavigationLink(isActive: $isShowingAIStudio) {
+            Group {
+                if let aiStudioViewModel {
+                    AIStudioView(viewModel: aiStudioViewModel)
+                } else {
+                    EmptyView()
+                }
+            }
+        } label: {
+            EmptyView()
+        }
+        .hidden()
+    }
+
     private var chatNavigationLink: some View {
         NavigationLink(isActive: $isShowingChat) {
             Group {
@@ -833,6 +856,19 @@ private extension Array {
 
 extension TripPlanView {
     private func openEdit(for day: TripDay) {
+        guard let plan = viewModel.plan else { return }
+
+        // Open AI Studio instead of legacy EditDayView
+        aiStudioViewModel = AIStudioViewModel(
+            tripId: plan.tripId,
+            dayId: day.index,
+            cityName: plan.destinationCity,
+            dayDate: day.date
+        )
+        isShowingAIStudio = true
+    }
+
+    private func openLegacyEdit(for day: TripDay) {
         guard let plan = viewModel.plan else { return }
         editViewModel = EditDayViewModel(
             day: day,

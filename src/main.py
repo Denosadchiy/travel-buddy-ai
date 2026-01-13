@@ -17,6 +17,7 @@ from src.api.critique import router as critique_router
 from src.api.fast_draft import router as fast_draft_router
 from src.api.place_details import router as place_details_router
 from src.api.auth import router as auth_router
+from src.api.day_studio import router as day_studio_router, places_router
 
 
 @asynccontextmanager
@@ -65,6 +66,8 @@ app.include_router(itinerary_router, prefix="/api")
 app.include_router(critique_router, prefix="/api")
 app.include_router(fast_draft_router, prefix="/api")
 app.include_router(place_details_router, prefix="/api")
+app.include_router(day_studio_router, prefix="/api")
+app.include_router(places_router, prefix="/api")
 
 
 @app.get("/")

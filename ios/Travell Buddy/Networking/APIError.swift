@@ -57,8 +57,9 @@ enum APIError: Error, LocalizedError {
         case .decodingError:
             return "Ошибка обработки данных. Попробуйте ещё раз."
 
-        case .serverError:
-            return "На сервере произошла ошибка. Попробуйте позже."
+        case .serverError(let message):
+            // Return the server's message directly for better context
+            return translateServerMessage(message)
 
         case .tripNotFound:
             return "Поездка не найдена. Создайте новую поездку."
@@ -104,5 +105,24 @@ enum APIError: Error, LocalizedError {
         default:
             return false
         }
+    }
+
+    /// Translate common server error messages to Russian
+    private func translateServerMessage(_ message: String) -> String {
+        // Map common FastAPI error messages to Russian
+        if message.contains("Trip with ID") && message.contains("not found") {
+            return "Поездка не найдена. Создайте новую поездку."
+        }
+        if message.contains("Itinerary not found") {
+            return "Маршрут ещё не создан. Сначала сгенерируйте план."
+        }
+        if message.contains("Day") && message.contains("not found") {
+            return "День не найден в маршруте."
+        }
+        if message.contains("don't have access") {
+            return "Нет доступа к этой поездке."
+        }
+        // Default: return the original message
+        return message
     }
 }

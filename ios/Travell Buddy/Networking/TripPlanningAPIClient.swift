@@ -16,6 +16,11 @@ protocol TripPlanningAPIClientProtocol {
     func planTrip(tripId: String) async throws -> ItineraryResponseDTO
     func getItinerary(tripId: String) async throws -> ItineraryResponseDTO
     func sendChatMessage(tripId: UUID, message: String) async throws -> TripChatResponseDTO
+
+    // AI Studio endpoints
+    func getDayStudio(tripId: UUID, dayId: Int) async throws -> DayStudioResponseDTO
+    func applyDayChanges(tripId: UUID, dayId: Int, request: ApplyChangesRequestDTO) async throws -> ApplyChangesResponseDTO
+    func searchPlaces(request: PlaceSearchRequestDTO) async throws -> PlaceSearchResponseDTO
 }
 
 // MARK: - Implementation
@@ -317,6 +322,170 @@ final class TripPlanningAPIClient: TripPlanningAPIClientProtocol {
 
         case 402:
             throw APIError.paywallRequired
+
+        default:
+            let message = String(data: data, encoding: .utf8)
+            print("❌ HTTP error: \(httpResponse.statusCode), message: \(message ?? "none")")
+            throw APIError.httpError(statusCode: httpResponse.statusCode, message: message)
+        }
+    }
+
+    // MARK: - AI Studio Methods
+
+    /// Get day studio data
+    /// GET /trips/{trip_id}/day/{day_id}/studio
+    func getDayStudio(tripId: UUID, dayId: Int) async throws -> DayStudioResponseDTO {
+        print("🎨 Fetching day studio: trip=\(tripId), day=\(dayId)")
+
+        let urlRequest = try requestBuilder.buildRequest(
+            path: "trips/\(tripId.uuidString.lowercased())/day/\(dayId)/studio",
+            method: .get
+        )
+
+        let (data, response) = try await session.data(for: urlRequest)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.networkError(NSError(domain: "Invalid response", code: -1))
+        }
+
+        print("📡 Response status: \(httpResponse.statusCode)")
+
+        switch httpResponse.statusCode {
+        case 200:
+            let decoder = JSONDecoder()
+            do {
+                let studioResponse = try decoder.decode(DayStudioResponseDTO.self, from: data)
+                print("✅ Day studio fetched: \(studioResponse.day.places.count) places")
+                return studioResponse
+            } catch {
+                print("❌ Decoding error: \(error)")
+                if let jsonString = String(data: data, encoding: .utf8) {
+                    print("📄 Response JSON: \(jsonString.prefix(500))")
+                }
+                throw APIError.decodingError(error)
+            }
+
+        case 404:
+            // Parse detail message from FastAPI error response
+            if let detailMessage = parseDetailMessage(from: data) {
+                print("📄 404 detail: \(detailMessage)")
+                throw APIError.serverError(message: detailMessage)
+            }
+            throw APIError.tripNotFound
+
+        case 401:
+            throw APIError.unauthorized
+
+        case 402:
+            throw APIError.paywallRequired
+
+        default:
+            let message = String(data: data, encoding: .utf8)
+            print("❌ HTTP error: \(httpResponse.statusCode), message: \(message ?? "none")")
+            throw APIError.httpError(statusCode: httpResponse.statusCode, message: message)
+        }
+    }
+
+    /// Parse FastAPI's {"detail": "..."} error response
+    private func parseDetailMessage(from data: Data) -> String? {
+        struct DetailResponse: Decodable {
+            let detail: String
+        }
+        return try? JSONDecoder().decode(DetailResponse.self, from: data).detail
+    }
+
+    /// Apply day changes
+    /// POST /trips/{trip_id}/day/{day_id}/apply_changes
+    func applyDayChanges(tripId: UUID, dayId: Int, request: ApplyChangesRequestDTO) async throws -> ApplyChangesResponseDTO {
+        print("✨ Applying day changes: trip=\(tripId), day=\(dayId), changes=\(request.changes.count)")
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let bodyData = try encoder.encode(request)
+
+        let urlRequest = try requestBuilder.buildRequest(
+            path: "trips/\(tripId.uuidString.lowercased())/day/\(dayId)/apply_changes",
+            method: .post,
+            body: bodyData
+        )
+
+        let (data, response) = try await session.data(for: urlRequest)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.networkError(NSError(domain: "Invalid response", code: -1))
+        }
+
+        print("📡 Response status: \(httpResponse.statusCode)")
+
+        switch httpResponse.statusCode {
+        case 200, 201:
+            let decoder = JSONDecoder()
+            do {
+                let applyResponse = try decoder.decode(ApplyChangesResponseDTO.self, from: data)
+                print("✅ Changes applied, new revision: \(applyResponse.revision)")
+                return applyResponse
+            } catch {
+                print("❌ Decoding error: \(error)")
+                if let jsonString = String(data: data, encoding: .utf8) {
+                    print("📄 Response JSON: \(jsonString.prefix(500))")
+                }
+                throw APIError.decodingError(error)
+            }
+
+        case 404:
+            throw APIError.tripNotFound
+
+        case 401:
+            throw APIError.unauthorized
+
+        case 409:
+            // Conflict - revision mismatch
+            throw APIError.httpError(statusCode: 409, message: "Revision conflict - please refresh and retry")
+
+        default:
+            let message = String(data: data, encoding: .utf8)
+            print("❌ HTTP error: \(httpResponse.statusCode), message: \(message ?? "none")")
+            throw APIError.httpError(statusCode: httpResponse.statusCode, message: message)
+        }
+    }
+
+    /// Search for places
+    /// POST /places/search
+    func searchPlaces(request: PlaceSearchRequestDTO) async throws -> PlaceSearchResponseDTO {
+        print("🔍 Searching places: query=\(request.query), city=\(request.city)")
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let bodyData = try encoder.encode(request)
+
+        let urlRequest = try requestBuilder.buildRequest(
+            path: "places/search",
+            method: .post,
+            body: bodyData
+        )
+
+        let (data, response) = try await session.data(for: urlRequest)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.networkError(NSError(domain: "Invalid response", code: -1))
+        }
+
+        print("📡 Response status: \(httpResponse.statusCode)")
+
+        switch httpResponse.statusCode {
+        case 200:
+            let decoder = JSONDecoder()
+            do {
+                let searchResponse = try decoder.decode(PlaceSearchResponseDTO.self, from: data)
+                print("✅ Found \(searchResponse.results.count) places")
+                return searchResponse
+            } catch {
+                print("❌ Decoding error: \(error)")
+                if let jsonString = String(data: data, encoding: .utf8) {
+                    print("📄 Response JSON: \(jsonString.prefix(500))")
+                }
+                throw APIError.decodingError(error)
+            }
 
         default:
             let message = String(data: data, encoding: .utf8)
