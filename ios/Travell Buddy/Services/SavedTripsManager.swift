@@ -174,6 +174,38 @@ final class SavedTripsManager: ObservableObject {
         }
     }
 
+    /// Get detailed information about a saved trip including full itinerary
+    func getSavedTripDetail(id: UUID) async -> SavedTripDetailResponseDTO? {
+        guard AuthManager.shared.isAuthenticated else {
+            errorMessage = "Требуется авторизация"
+            return nil
+        }
+
+        do {
+            let detail: SavedTripDetailResponseDTO = try await apiClient.execute(
+                path: "/saved_trips/\(id.uuidString)/detail",
+                method: .get
+            )
+
+            errorMessage = nil
+            return detail
+
+        } catch {
+            print("[SavedTrips] Failed to fetch detail: \(error)")
+            errorMessage = "Не удалось загрузить детали поездки"
+            return nil
+        }
+    }
+
+    /// Get detailed information about a saved trip and convert it to TripPlan
+    func getSavedTripAsPlan(id: UUID) async -> TripPlan? {
+        guard let detail = await getSavedTripDetail(id: id) else {
+            return nil
+        }
+
+        return detail.toTripPlan()
+    }
+
     /// Delete a saved trip
     func deleteSavedTrip(id: UUID) async -> Bool {
         guard AuthManager.shared.isAuthenticated else {

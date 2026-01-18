@@ -181,6 +181,7 @@ private struct EmailAuthSheet: View {
     // Resend cooldown
     @State private var resendCooldown: Int = 0
     @State private var resendTimer: Timer?
+    @FocusState private var focusedField: EmailAuthField?
 
     var body: some View {
         NavigationView {
@@ -207,8 +208,10 @@ private struct EmailAuthSheet: View {
                     // Email input
                     TextField("email@example.com", text: $email)
                         .keyboardType(.emailAddress)
+                        .textContentType(.emailAddress)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .focused($focusedField, equals: .email)
                         .padding(14)
                         .background(Color(.secondarySystemBackground))
                         .cornerRadius(12)
@@ -218,6 +221,7 @@ private struct EmailAuthSheet: View {
                         .keyboardType(.numberPad)
                         .multilineTextAlignment(.center)
                         .font(.system(size: 24, weight: .semibold, design: .monospaced))
+                        .focused($focusedField, equals: .code)
                         .padding(14)
                         .background(Color(.secondarySystemBackground))
                         .cornerRadius(12)
@@ -308,6 +312,12 @@ private struct EmailAuthSheet: View {
         .onDisappear {
             stopResendTimer()
         }
+        .onAppear {
+            focusedField = .email
+        }
+        .onChange(of: challengeId) { _, newValue in
+            focusedField = newValue == nil ? .email : .code
+        }
     }
 
     private var primaryButtonEnabled: Bool {
@@ -384,4 +394,9 @@ private struct EmailAuthSheet: View {
         resendTimer = nil
         resendCooldown = 0
     }
+}
+
+private enum EmailAuthField {
+    case email
+    case code
 }

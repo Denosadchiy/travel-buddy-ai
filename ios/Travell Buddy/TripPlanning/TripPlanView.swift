@@ -60,7 +60,12 @@ struct TripPlanView: View {
                     print("📱 Selected tab: \(viewModel.selectedTab)")
                 }
                 .safeAreaInset(edge: .bottom, spacing: 0) {
-                    guideCTA(height: ctaHeight)
+                    // Show save button only if:
+                    // 1. Trip is newly generated (not loaded from saved trips), OR
+                    // 2. Trip was loaded from saved trips AND has unsaved changes
+                    if !viewModel.isLoadedFromSavedTrip || viewModel.hasUnsavedChanges {
+                        guideCTA(height: ctaHeight)
+                    }
                 }
                 .background(editDayNavigationLink)
                 .background(aiStudioNavigationLink)

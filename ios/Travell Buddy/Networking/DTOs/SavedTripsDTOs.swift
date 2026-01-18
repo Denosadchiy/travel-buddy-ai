@@ -54,6 +54,100 @@ struct SavedTripsListResponseDTO: Codable {
     let total: Int
 }
 
+// MARK: - Detail Response
+
+struct SavedTripDetailResponseDTO: Codable {
+    let id: String
+    let tripId: String
+    let cityName: String
+    let startDate: String
+    let endDate: String
+    let heroImageUrl: String?
+    let numTravelers: Int
+    let itinerary: [SavedItineraryDayDTO]?
+    let savedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case tripId = "trip_id"
+        case cityName = "city_name"
+        case startDate = "start_date"
+        case endDate = "end_date"
+        case heroImageUrl = "hero_image_url"
+        case numTravelers = "num_travelers"
+        case itinerary
+        case savedAt = "saved_at"
+    }
+}
+
+struct SavedItineraryDayDTO: Codable {
+    let dayNumber: Int
+    let date: String
+    let theme: String?
+    let blocks: [SavedItineraryBlockDTO]
+
+    enum CodingKeys: String, CodingKey {
+        case dayNumber = "day_number"
+        case date
+        case theme
+        case blocks
+    }
+}
+
+struct SavedItineraryBlockDTO: Codable {
+    let blockType: String
+    let startTime: String
+    let endTime: String
+    let poi: SavedPOIDTO?
+    let travelTimeFromPrev: Int?
+    let travelDistanceMeters: Int?
+    let travelPolyline: String?
+    let notes: String?
+
+    enum CodingKeys: String, CodingKey {
+        case blockType = "block_type"
+        case startTime = "start_time"
+        case endTime = "end_time"
+        case poi
+        case travelTimeFromPrev = "travel_time_from_prev"
+        case travelDistanceMeters = "travel_distance_meters"
+        case travelPolyline = "travel_polyline"
+        case notes
+    }
+}
+
+struct SavedPOIDTO: Codable {
+    let poiId: String?  // Backend uses "poi_id" as UUID string
+    let id: String?     // Keep for backward compatibility
+    let name: String
+    let category: String?
+    let tags: [String]?
+    let address: String?
+    let location: String?
+    let rating: Double?
+    let priceLevel: Int?
+    let photoUrl: String?
+    let categories: [String]?  // Legacy field, mapped to tags
+    let lat: Double?
+    let lon: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case poiId = "poi_id"
+        case id
+        case name
+        case category
+        case tags
+        case address
+        case location
+        case rating
+        case priceLevel = "price_level"
+        case photoUrl = "photo_url"
+        case categories
+        case lat
+        case lon
+    }
+}
+
 // MARK: - Domain Models
 
 struct SavedTripCard: Identifiable, Equatable {
@@ -103,6 +197,167 @@ struct SavedTripCard: Identifiable, Equatable {
             heroImageUrl: dto.heroImageUrl,
             alreadySaved: dto.alreadySaved
         )
+    }
+}
+
+// MARK: - Mapping to TripPlan Domain Models
+
+extension SavedTripDetailResponseDTO {
+    /// Convert SavedTripDetailResponseDTO to TripPlan
+    func toTripPlan() -> TripPlan? {
+        guard let tripId = UUID(uuidString: self.tripId) else {
+            return nil
+        }
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+
+        guard let startDate = dateFormatter.date(from: self.startDate),
+              let endDate = dateFormatter.date(from: self.endDate) else {
+            return nil
+        }
+
+        // Convert itinerary days to TripDay array
+        let days = itinerary?.map { $0.toTripDay() } ?? []
+
+        return TripPlan(
+            tripId: tripId,
+            destinationCity: cityName,
+            startDate: startDate,
+            endDate: endDate,
+            days: days,
+            travellersCount: numTravelers,
+            comfortLevel: "Комфорт", // Default comfort level for saved trips
+            interestsSummary: "путешествие",
+            tripSummary: nil,
+            isLocked: false, // Saved trips are always unlocked for authenticated users
+            cityPhotoReference: nil // Could be extracted from heroImageUrl if needed
+        )
+    }
+}
+
+extension SavedItineraryDayDTO {
+    /// Convert SavedItineraryDayDTO to TripDay
+    func toTripDay() -> TripDay {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        let date = dateFormatter.date(from: self.date) ?? Date()
+
+        // Convert blocks to activities (filter out blocks without POI)
+        let activities = blocks.compactMap { $0.toTripActivity() }
+
+        return TripDay(
+            index: dayNumber,
+            date: date,
+            title: theme,
+            summary: nil,
+            activities: activities
+        )
+    }
+}
+
+extension SavedItineraryBlockDTO {
+    /// Convert SavedItineraryBlockDTO to TripActivity
+    func toTripActivity() -> TripActivity? {
+        // Skip blocks without POI
+        guard let poi = poi else {
+            return nil
+        }
+
+        // Format time (strip seconds if present)
+        let time = formatTime(startTime)
+        let formattedEndTime = formatTime(endTime)
+
+        // Map category from block type
+        let category = mapBlockTypeToCategory(blockType, poi: poi)
+
+        // Combine tags and categories (prefer tags, fallback to categories for backward compatibility)
+        let allTags = poi.tags ?? poi.categories
+
+        return TripActivity(
+            id: UUID(), // Generate new UUID
+            time: time,
+            endTime: formattedEndTime,
+            title: poi.name,
+            description: poi.address ?? poi.location ?? "",
+            category: category,
+            address: poi.address ?? poi.location,
+            note: notes,
+            latitude: poi.lat,
+            longitude: poi.lon,
+            travelPolyline: travelPolyline,
+            rating: poi.rating,
+            tags: allTags,
+            poiId: poi.poiId ?? poi.id,  // Prefer poi_id, fallback to id
+            travelTimeMinutes: travelTimeFromPrev,
+            travelDistanceMeters: travelDistanceMeters
+        )
+    }
+
+    private func formatTime(_ time: String) -> String {
+        // Convert "HH:MM:SS" to "HH:MM"
+        let components = time.split(separator: ":")
+        if components.count >= 2 {
+            return "\(components[0]):\(components[1])"
+        }
+        return time
+    }
+
+    private func mapBlockTypeToCategory(_ blockType: String, poi: SavedPOIDTO) -> TripActivityCategory {
+        // Check POI category field first (most specific)
+        if let category = poi.category?.lowercased() {
+            if category.contains("museum") || category.contains("art") || category.contains("gallery") {
+                return .museum
+            }
+            if category.contains("viewpoint") || category.contains("view") || category.contains("park") || category.contains("garden") {
+                return .viewpoint
+            }
+            if category.contains("bar") || category.contains("club") || category.contains("nightlife") {
+                return .nightlife
+            }
+            if category.contains("restaurant") || category.contains("cafe") || category.contains("food") {
+                return .food
+            }
+        }
+
+        // PRIORITY 2: Check POI tags (backward compatible with categories)
+        let allTags = poi.tags ?? poi.categories
+        if let tags = allTags {
+            for tag in tags {
+                let lowercasedTag = tag.lowercased()
+
+                // Museum & Art
+                if lowercasedTag.contains("museum") || lowercasedTag.contains("art") || lowercasedTag.contains("gallery") {
+                    return .museum
+                }
+                // Viewpoints & Nature
+                if lowercasedTag.contains("viewpoint") || lowercasedTag.contains("view") || lowercasedTag.contains("park") || lowercasedTag.contains("garden") {
+                    return .viewpoint
+                }
+                // Nightlife
+                if lowercasedTag.contains("bar") || lowercasedTag.contains("club") || lowercasedTag.contains("nightlife") {
+                    return .nightlife
+                }
+                // Food establishments
+                if lowercasedTag.contains("restaurant") || lowercasedTag.contains("cafe") || lowercasedTag.contains("food") {
+                    return .food
+                }
+            }
+        }
+
+        // PRIORITY 3: Fall back to block type if POI category/tags don't match
+        switch blockType.lowercased() {
+        case "meal":
+            return .food
+        case "nightlife":
+            return .nightlife
+        case "activity":
+            return .walk  // Generic activity
+        case "rest":
+            return .other
+        default:
+            return .other
+        }
     }
 }
 

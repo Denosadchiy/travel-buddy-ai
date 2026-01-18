@@ -30,6 +30,12 @@ final class TripPlanViewModel: ObservableObject {
     @Published var isShowingPaywall: Bool = false
     @Published var pendingIntent: PendingIntent?
 
+    /// Indicates if this trip was loaded from saved trips
+    @Published var isLoadedFromSavedTrip: Bool = false
+
+    /// Indicates if the trip has been modified since loading
+    @Published var hasUnsavedChanges: Bool = false
+
     private let apiClient: TripPlanningAPIClient
 
     // Store last generation parameters for retry
@@ -83,6 +89,12 @@ final class TripPlanViewModel: ObservableObject {
         do {
             let itinerary = try await apiClient.getItinerary(tripId: existingPlan.tripId.uuidString.lowercased())
             self.plan = itinerary.toTripPlan(using: existingPlan)
+
+            // Mark as having unsaved changes if loaded from saved trip
+            if isLoadedFromSavedTrip {
+                self.hasUnsavedChanges = true
+            }
+
             print("✅ Itinerary refreshed successfully")
             return true
         } catch {
@@ -375,6 +387,9 @@ final class TripPlanViewModel: ObservableObject {
 
         // Update the plan
         self.plan = updatedPlan
+
+        // Mark as having unsaved changes
+        self.hasUnsavedChanges = true
 
         print("🔄 Activity replaced at day \(dayIndex), position \(activityIndex): \(newActivity.title)")
     }

@@ -11,6 +11,10 @@ struct AllTripsView: View {
     let showsBackButton: Bool
 
     @StateObject private var savedTripsManager = SavedTripsManager.shared
+    @StateObject private var tripPlanViewModel = TripPlanViewModel()
+    @State private var selectedTripId: UUID?
+    @State private var isLoadingTrip = false
+    @State private var showTripPlan = false
     @Environment(\.dismiss) private var dismiss
 
     init(showsBackButton: Bool = true) {
@@ -131,18 +135,68 @@ struct AllTripsView: View {
     }
 
     private var tripsList: some View {
-        ScrollView(showsIndicators: false) {
-            LazyVStack(spacing: 16) {
-                ForEach(savedTripsManager.allTrips) { trip in
-                    AllTripCardView(trip: trip)
+        ZStack {
+            ScrollView(showsIndicators: false) {
+                LazyVStack(spacing: 16) {
+                    ForEach(savedTripsManager.allTrips) { trip in
+                        Button(action: {
+                            loadAndShowTrip(tripId: trip.id)
+                        }) {
+                            AllTripCardView(trip: trip)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, showsBackButton ? 32 : 32 + HomeStyle.Layout.tabBarHeight)
+            }
+            .refreshable {
+                await savedTripsManager.refreshAll()
+            }
+
+            // Loading overlay
+            if isLoadingTrip {
+                Color.black.opacity(0.4)
+                    .ignoresSafeArea()
+                VStack(spacing: 16) {
+                    ProgressView()
+                        .tint(.white)
+                        .scaleEffect(1.4)
+                    Text("Загрузка маршрута...")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(.white)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .padding(.bottom, showsBackButton ? 32 : 32 + HomeStyle.Layout.tabBarHeight)
         }
-        .refreshable {
-            await savedTripsManager.refreshAll()
+        .fullScreenCover(isPresented: $showTripPlan) {
+            if tripPlanViewModel.plan != nil {
+                NavigationStack {
+                    TripPlanView(viewModel: tripPlanViewModel)
+                }
+            }
+        }
+    }
+
+    private func loadAndShowTrip(tripId: UUID) {
+        isLoadingTrip = true
+
+        Task {
+            // Load the trip plan from the saved trip
+            if let tripPlan = await savedTripsManager.getSavedTripAsPlan(id: tripId) {
+                await MainActor.run {
+                    tripPlanViewModel.plan = tripPlan
+                    tripPlanViewModel.isLoadedFromSavedTrip = true
+                    tripPlanViewModel.hasUnsavedChanges = false
+                    isLoadingTrip = false
+                    showTripPlan = true
+                }
+            } else {
+                await MainActor.run {
+                    isLoadingTrip = false
+                    // TODO: Show error alert if needed
+                }
+            }
         }
     }
 }

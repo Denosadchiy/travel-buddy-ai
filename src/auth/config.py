@@ -80,6 +80,10 @@ class AuthSettings(BaseSettings):
         default="Travel Buddy",
         description="From name for OTP emails"
     )
+    smtp_use_ssl: bool = Field(
+        default=False,
+        description="Use SMTP SSL (e.g. port 465). If false, STARTTLS is used."
+    )
     otp_expire_minutes: int = Field(
         default=10,
         description="OTP code expiration time in minutes"

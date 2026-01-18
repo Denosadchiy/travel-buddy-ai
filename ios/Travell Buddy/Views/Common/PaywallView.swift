@@ -131,6 +131,7 @@ private struct PaywallEmailAuthView: View {
     @State private var errorText: String?
     @State private var resendCooldown: Int = 0
     @State private var resendTimer: Timer?
+    @FocusState private var focusedField: EmailAuthField?
 
     var body: some View {
         NavigationView {
@@ -156,8 +157,10 @@ private struct PaywallEmailAuthView: View {
                 if challengeId == nil {
                     TextField("email@example.com", text: $email)
                         .keyboardType(.emailAddress)
+                        .textContentType(.emailAddress)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .focused($focusedField, equals: .email)
                         .padding(12)
                         .background(Color(.secondarySystemBackground))
                         .cornerRadius(10)
@@ -166,6 +169,7 @@ private struct PaywallEmailAuthView: View {
                         .keyboardType(.numberPad)
                         .multilineTextAlignment(.center)
                         .font(.system(size: 20, weight: .semibold, design: .monospaced))
+                        .focused($focusedField, equals: .code)
                         .padding(12)
                         .background(Color(.secondarySystemBackground))
                         .cornerRadius(10)
@@ -245,6 +249,12 @@ private struct PaywallEmailAuthView: View {
         .onDisappear {
             stopResendTimer()
         }
+        .onAppear {
+            focusedField = .email
+        }
+        .onChange(of: challengeId) { _, newValue in
+            focusedField = newValue == nil ? .email : .code
+        }
         .onChange(of: authManager.state) { _, newState in
             if case .loggedIn = newState {
                 dismiss()
@@ -319,4 +329,9 @@ private struct PaywallEmailAuthView: View {
         resendTimer = nil
         resendCooldown = 0
     }
+}
+
+private enum EmailAuthField {
+    case email
+    case code
 }

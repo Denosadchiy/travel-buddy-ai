@@ -290,11 +290,16 @@ If you didn't request this code, please ignore this email.
             msg.attach(MIMEText(text, "plain"))
             msg.attach(MIMEText(html, "html"))
 
-            # Send email
-            with smtplib.SMTP(auth_settings.smtp_host, auth_settings.smtp_port) as server:
-                server.starttls()
-                server.login(auth_settings.smtp_user, auth_settings.smtp_password)
-                server.sendmail(auth_settings.smtp_from_email, email, msg.as_string())
+            # Send email (SSL or STARTTLS depending on config)
+            if auth_settings.smtp_use_ssl:
+                with smtplib.SMTP_SSL(auth_settings.smtp_host, auth_settings.smtp_port) as server:
+                    server.login(auth_settings.smtp_user, auth_settings.smtp_password)
+                    server.sendmail(auth_settings.smtp_from_email, email, msg.as_string())
+            else:
+                with smtplib.SMTP(auth_settings.smtp_host, auth_settings.smtp_port) as server:
+                    server.starttls()
+                    server.login(auth_settings.smtp_user, auth_settings.smtp_password)
+                    server.sendmail(auth_settings.smtp_from_email, email, msg.as_string())
 
             return True
 

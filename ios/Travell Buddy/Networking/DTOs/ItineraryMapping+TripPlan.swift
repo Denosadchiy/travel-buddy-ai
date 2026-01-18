@@ -122,9 +122,9 @@ extension ItineraryResponseDTO {
     }
 }
 
-// MARK: - ItineraryDayDTO → TripDay
+// MARK: - TripItineraryDayDTO → TripDay
 
-extension ItineraryDayDTO {
+extension TripItineraryDayDTO {
     func toTripDay() -> TripDay {
         // Parse date
         let date = dateFormatter.date(from: self.date) ?? Date()

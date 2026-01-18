@@ -332,76 +332,53 @@ struct MainTabView: View {
     @State private var selectedTab: MainTab = .home
     @State private var pendingDestinationTab: MainTab?
     @StateObject private var gatingManager = AuthGatingManager.shared
-    @StateObject private var tabBarVisibility = TabBarVisibilityManager.shared
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            // Tab content
-            TabView(selection: $selectedTab) {
-                HomeTabRootView()
+        TabView(selection: $selectedTab) {
+            HomeTabRootView()
+                .tabItem {
+                    Label(MainTab.home.title, systemImage: MainTab.home.systemImage)
+                }
                 .tag(MainTab.home)
-                .tabItem {
-                    Image(systemName: MainTab.home.systemImage)
-                    Text(MainTab.home.title)
-                }
 
-                NewTripTabRootView()
+            NewTripTabRootView()
+                .tabItem {
+                    Label(MainTab.newTrip.title, systemImage: MainTab.newTrip.systemImage)
+                }
                 .tag(MainTab.newTrip)
-                .tabItem {
-                    Image(systemName: MainTab.newTrip.systemImage)
-                    Text(MainTab.newTrip.title)
-                }
 
-                SavedTripsTabRootView()
+            SavedTripsTabRootView()
+                .tabItem {
+                    Label(MainTab.savedTrips.title, systemImage: MainTab.savedTrips.systemImage)
+                }
                 .tag(MainTab.savedTrips)
+
+            ProfileTabRootView()
                 .tabItem {
-                    Image(systemName: MainTab.savedTrips.systemImage)
-                    Text(MainTab.savedTrips.title)
+                    Label(MainTab.profile.title, systemImage: MainTab.profile.systemImage)
                 }
-
-                ProfileTabRootView()
-                    .tag(MainTab.profile)
-                    .tabItem {
-                        Image(systemName: MainTab.profile.systemImage)
-                        Text(MainTab.profile.title)
-                    }
-            }
-            .toolbar(.hidden, for: .tabBar)
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                // Spacer to prevent content from being covered by tab bar
-                Color.clear
-                    .frame(height: HomeStyle.Layout.tabBarHeight)
-            }
-            .tint(Color.travelBuddyOrange)
-            .sheet(isPresented: $gatingManager.isAuthModalPresented) {
-                PaywallView(
-                    subtitle: gatingManager.gatingMessage,
-                    dayNumber: gatingManager.pendingAction?.dayNumber,
-                    onAuthSuccess: {
-                        gatingManager.handleAuthSuccess()
-                    }
-                )
-                .interactiveDismissDisabled(false)
-                .onDisappear {
-                    if !AuthManager.shared.isAuthenticated {
-                        gatingManager.cancelPendingAction()
-                        pendingDestinationTab = nil
-                    }
+                .tag(MainTab.profile)
+        }
+        .tint(Color.travelBuddyOrange)
+        .sheet(isPresented: $gatingManager.isAuthModalPresented) {
+            PaywallView(
+                subtitle: gatingManager.gatingMessage,
+                dayNumber: gatingManager.pendingAction?.dayNumber,
+                onAuthSuccess: {
+                    gatingManager.handleAuthSuccess()
                 }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .mainTabSelectionRequested)) { notification in
-                guard let tab = notification.object as? MainTab else { return }
-                handleTabSelection(tab)
-            }
-            .environment(\.tabBarVisibility, tabBarVisibility)
-
-            // Single tab bar overlay
-            BottomTabBarView(
-                selectedTab: selectedTab,
-                onSelect: handleTabSelection
             )
-            .opacity(tabBarVisibility.isVisible ? 1 : 0)
-            .offset(y: tabBarVisibility.isVisible ? 0 : 100)
+            .interactiveDismissDisabled(false)
+            .onDisappear {
+                if !AuthManager.shared.isAuthenticated {
+                    gatingManager.cancelPendingAction()
+                    pendingDestinationTab = nil
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .mainTabSelectionRequested)) { notification in
+            guard let tab = notification.object as? MainTab else { return }
+            handleTabSelection(tab)
         }
     }
 

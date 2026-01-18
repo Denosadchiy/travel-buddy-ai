@@ -9,7 +9,7 @@ import Foundation
 
 struct ItineraryResponseDTO: Codable {
     let tripId: String
-    let days: [ItineraryDayDTO]
+    let days: [TripItineraryDayDTO]
     let createdAt: String
     let tripSummary: String?  // Brief overview of the entire trip
     let isLocked: Bool?
@@ -25,7 +25,7 @@ struct ItineraryResponseDTO: Codable {
     }
 }
 
-struct ItineraryDayDTO: Codable {
+struct TripItineraryDayDTO: Codable {
     let dayNumber: Int
     let date: String  // "YYYY-MM-DD"
     let theme: String?

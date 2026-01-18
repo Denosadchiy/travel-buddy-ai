@@ -12,7 +12,6 @@ struct HomeTabRootView: View {
         NavigationStack {
             HomeView()
         }
-        .toolbar(.hidden, for: .navigationBar)
     }
 }
 
@@ -48,10 +47,5 @@ struct SavedTripsTabRootView: View {
 struct ProfileTabRootView: View {
     var body: some View {
         AccountSheet(title: "Профиль", showsDoneButton: false)
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                // Spacer to account for tab bar height
-                Color.clear
-                    .frame(height: HomeStyle.Layout.tabBarHeight)
-            }
     }
 }

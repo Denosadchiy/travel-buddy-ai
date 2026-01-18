@@ -12,7 +12,10 @@ struct HomeView: View {
     @State private var showAuthSheet: Bool = false
     @State private var showAllTrips: Bool = false
     @State private var isShowingChat: Bool = false
+    @State private var isLoadingTrip = false
+    @State private var showTripPlan = false
     @StateObject private var savedTripsManager = SavedTripsManager.shared
+    @StateObject private var tripPlanViewModel = TripPlanViewModel()
 
     var body: some View {
         GeometryReader { proxy in
@@ -66,7 +69,10 @@ struct HomeView: View {
                                 trips: savedTripsManager.topTrips,
                                 totalCount: savedTripsManager.totalCount,
                                 isLoading: savedTripsManager.isLoading,
-                                onShowAll: { showAllTrips = true }
+                                onShowAll: { showAllTrips = true },
+                                onTripTap: { tripId in
+                                    loadAndShowTrip(tripId: tripId)
+                                }
                             )
                             // DestinationsListView() // Hidden per request.
                         }
@@ -76,9 +82,30 @@ struct HomeView: View {
                     }
                 }
                 .ignoresSafeArea(.container, edges: .top)
+
+                // Loading overlay for trip loading
+                if isLoadingTrip {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .tint(.white)
+                            .scaleEffect(1.4)
+                        Text("Загрузка маршрута...")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundColor(.white)
+                    }
+                }
             }
         }
         .navigationBarHidden(true)
+        .fullScreenCover(isPresented: $showTripPlan) {
+            if tripPlanViewModel.plan != nil {
+                NavigationStack {
+                    TripPlanView(viewModel: tripPlanViewModel)
+                }
+            }
+        }
         .sheet(isPresented: $showAccountSheet) {
             AccountSheet()
         }
@@ -117,6 +144,28 @@ struct HomeView: View {
             showAuthSheet = true
         } else {
             showAccountSheet = true
+        }
+    }
+
+    private func loadAndShowTrip(tripId: UUID) {
+        isLoadingTrip = true
+
+        Task {
+            // Load the trip plan from the saved trip
+            if let tripPlan = await savedTripsManager.getSavedTripAsPlan(id: tripId) {
+                await MainActor.run {
+                    tripPlanViewModel.plan = tripPlan
+                    tripPlanViewModel.isLoadedFromSavedTrip = true
+                    tripPlanViewModel.hasUnsavedChanges = false
+                    isLoadingTrip = false
+                    showTripPlan = true
+                }
+            } else {
+                await MainActor.run {
+                    isLoadingTrip = false
+                    // TODO: Show error alert if needed
+                }
+            }
         }
     }
 }
@@ -460,6 +509,7 @@ private struct TripsCarouselView: View {
     let totalCount: Int
     let isLoading: Bool
     let onShowAll: () -> Void
+    let onTripTap: (UUID) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -499,7 +549,12 @@ private struct TripsCarouselView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 12) {
                         ForEach(trips) { trip in
-                            SavedTripCardView(trip: trip)
+                            Button(action: {
+                                onTripTap(trip.id)
+                            }) {
+                                SavedTripCardView(trip: trip)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                     .padding(.horizontal, HomeStyle.Layout.horizontalPadding)

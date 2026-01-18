@@ -171,10 +171,16 @@ actor AuthenticatedAPIClient {
                 return .unauthorized
 
             case 402:
+                if let body = String(data: data, encoding: .utf8), !body.isEmpty {
+                    print("[API] 402 response body: \(body)")
+                }
                 return .error(.paywallRequired)
 
             default:
                 let message = String(data: data, encoding: .utf8)
+                if let message, !message.isEmpty {
+                    print("[API] \(httpResponse.statusCode) response body: \(message)")
+                }
                 return .error(.httpError(statusCode: httpResponse.statusCode, message: message))
             }
         } catch let error as URLError {
