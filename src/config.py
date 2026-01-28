@@ -341,6 +341,19 @@ class Settings(BaseSettings):
         description="Auto-create database tables on startup (dev only)"
     )
 
+    # CORS Configuration
+    allowed_origins: str = Field(
+        default="*",
+        description="Comma-separated list of allowed origins for CORS. Use '*' for development only."
+    )
+
+    @property
+    def cors_origins(self) -> list[str]:
+        """Parse ALLOWED_ORIGINS into a list."""
+        if self.allowed_origins == "*":
+            return ["*"]
+        return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+
 
 # Global settings instance
 settings = Settings()

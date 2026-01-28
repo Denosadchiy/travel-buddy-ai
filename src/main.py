@@ -50,9 +50,11 @@ app = FastAPI(
 )
 
 # CORS middleware for mobile app
+# Configure ALLOWED_ORIGINS environment variable in production
+# Example: ALLOWED_ORIGINS="https://your-app.railway.app,https://custom-domain.com"
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

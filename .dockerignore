@@ -1,0 +1,78 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Environment
+.env
+.env.*
+.venv
+venv/
+ENV/
+env/
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing
+.pytest_cache
+.coverage
+.tox/
+htmlcov/
+.hypothesis/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# iOS (не нужно в Docker image)
+ios/
+*.xcodeproj
+*.xcworkspace
+
+# Documentation
+*.md
+README.md
+CLAUDE.md
+docs/
+
+# CI/CD
+.github/
+
+# Tests
+tests/
+test_*.py
+
+# Logs
+*.log
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Alembic (миграции будем запускать отдельно)
+alembic.ini
