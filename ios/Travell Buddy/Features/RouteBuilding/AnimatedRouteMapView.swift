@@ -33,6 +33,14 @@ struct AnimatedRouteMapView: UIViewRepresentable {
         // Configure map appearance with 3D buildings
         configureMapAppearance(mapView)
 
+        // Validate coordinates before setting camera
+        guard CLLocationCoordinate2DIsValid(centerCoordinate),
+              !centerCoordinate.latitude.isNaN,
+              !centerCoordinate.longitude.isNaN else {
+            print("⚠️ AnimatedRouteMapView: Invalid center coordinate, using default")
+            return mapView
+        }
+
         // Set initial 3D camera
         let camera = MKMapCamera(
             lookingAtCenter: centerCoordinate,
@@ -118,7 +126,10 @@ struct AnimatedRouteMapView: UIViewRepresentable {
 
         // Calculate center point: either latest POI or center of all POIs
         let targetCenter: CLLocationCoordinate2D
-        if let latestPOI = visiblePOIs.last {
+        if let latestPOI = visiblePOIs.last,
+           CLLocationCoordinate2DIsValid(latestPOI.coordinate),
+           !latestPOI.coordinate.latitude.isNaN,
+           !latestPOI.coordinate.longitude.isNaN {
             // Weighted center: 70% original center, 30% latest POI
             targetCenter = CLLocationCoordinate2D(
                 latitude: centerCoordinate.latitude * 0.7 + latestPOI.coordinate.latitude * 0.3,
@@ -126,6 +137,14 @@ struct AnimatedRouteMapView: UIViewRepresentable {
             )
         } else {
             targetCenter = centerCoordinate
+        }
+
+        // Validate final target center
+        guard CLLocationCoordinate2DIsValid(targetCenter),
+              !targetCenter.latitude.isNaN,
+              !targetCenter.longitude.isNaN else {
+            print("⚠️ AnimatedRouteMapView: Invalid target center, skipping camera animation")
+            return
         }
 
         // Create new camera with updated parameters

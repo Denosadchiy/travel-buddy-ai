@@ -80,7 +80,7 @@ final class RouteBuildingViewModel: ObservableObject {
     // MARK: - Private Properties
 
     private var tripId: UUID?  // Made optional - will be set after trip creation
-    private let cityCoordinate: CLLocationCoordinate2D
+    private var cityCoordinate: CLLocationCoordinate2D  // Made mutable to update from backend
     private let apiClient: TripPlanningAPIClientProtocol
     private let tripRequest: TripCreateRequestDTO?  // Parameters for creating trip
 
@@ -176,6 +176,23 @@ final class RouteBuildingViewModel: ObservableObject {
 
         guard let tripId = UUID(uuidString: tripResponse.id) else {
             throw APIError.decodingError(NSError(domain: "Invalid trip ID", code: -1))
+        }
+
+        // Update city coordinates from backend if available
+        if let lat = tripResponse.cityCenterLat, let lon = tripResponse.cityCenterLon {
+            let newCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+            print("✅ createTrip: updating city coordinate from backend: \(lat), \(lon)")
+            self.cityCoordinate = newCoordinate
+
+            // Regenerate demo POIs around correct coordinates
+            self.demoPOIs = Self.generateDemoPOIs(around: newCoordinate)
+
+            // Reset animation state to show new POIs
+            self.visiblePOIs = []
+            self.routeCoordinates = []
+            self.currentPOIIndex = 0
+        } else {
+            print("⚠️ createTrip: backend did not return city coordinates, using fallback")
         }
 
         print("✅ createTrip: trip created with ID \(tripId)")

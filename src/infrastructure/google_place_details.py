@@ -216,6 +216,12 @@ async def fetch_place_details(place_id: str) -> PlaceDetails:
     utc_offset = result.get("utc_offset")
     next_open, next_close = _extract_next_times(opening_hours, utc_offset)
 
+    # Validate coordinates are present
+    lat = location.get("lat")
+    lon = location.get("lng")
+    if lat is None or lon is None:
+        raise RuntimeError(f"Google Place Details response missing coordinates for place_id={place_id}")
+
     return PlaceDetails(
         place_id=result.get("place_id", place_id),
         name=result.get("name", ""),
@@ -228,8 +234,8 @@ async def fetch_place_details(place_id: str) -> PlaceDetails:
         next_open_time=next_open,
         next_close_time=next_close,
         address=result.get("formatted_address"),
-        latitude=location.get("lat", 0.0),
-        longitude=location.get("lng", 0.0),
+        latitude=lat,
+        longitude=lon,
         website=result.get("website"),
         phone=result.get("international_phone_number") or result.get("formatted_phone_number"),
         google_maps_url=result.get("url"),

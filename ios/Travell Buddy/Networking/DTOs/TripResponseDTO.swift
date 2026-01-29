@@ -10,6 +10,8 @@ import Foundation
 struct TripResponseDTO: Codable {
     let id: String
     let city: String
+    let cityCenterLat: Double?
+    let cityCenterLon: Double?
     let startDate: String
     let endDate: String
     let numTravelers: Int
@@ -18,6 +20,8 @@ struct TripResponseDTO: Codable {
     let interests: [String]
     let dailyRoutine: DailyRoutineResponseDTO?
     let hotelLocation: String?
+    let hotelLat: Double?
+    let hotelLon: Double?
     let additionalPreferences: [String: String]?
     let cityPhotoReference: String?
     let createdAt: String
@@ -26,6 +30,8 @@ struct TripResponseDTO: Codable {
     enum CodingKeys: String, CodingKey {
         case id
         case city
+        case cityCenterLat = "city_center_lat"
+        case cityCenterLon = "city_center_lon"
         case startDate = "start_date"
         case endDate = "end_date"
         case numTravelers = "num_travelers"
@@ -34,6 +40,8 @@ struct TripResponseDTO: Codable {
         case interests
         case dailyRoutine = "daily_routine"
         case hotelLocation = "hotel_location"
+        case hotelLat = "hotel_lat"
+        case hotelLon = "hotel_lon"
         case additionalPreferences = "additional_preferences"
         case cityPhotoReference = "city_photo_reference"
         case createdAt = "created_at"

@@ -545,6 +545,13 @@ class GooglePlacesPOIProvider(POIProvider):
             location = geometry.get("location", {})
             opening_hours = place.get("opening_hours", {})
 
+            # Validate that coordinates are present - skip POIs without valid coordinates
+            lat = location.get("lat")
+            lon = location.get("lng")
+            if lat is None or lon is None:
+                logger.warning(f"Skipping place '{place.get('name')}' - missing coordinates")
+                return None
+
             return GooglePlaceResult(
                 place_id=place["place_id"],
                 name=place["name"],
@@ -555,8 +562,8 @@ class GooglePlacesPOIProvider(POIProvider):
                 price_level=place.get("price_level"),
                 business_status=place.get("business_status"),
                 open_now=opening_hours.get("open_now") if isinstance(opening_hours, dict) else None,
-                lat=location.get("lat", 0.0),
-                lon=location.get("lng", 0.0),
+                lat=lat,
+                lon=lon,
             )
         except (KeyError, TypeError) as e:
             logger.warning(f"Failed to parse place result: {e}")
