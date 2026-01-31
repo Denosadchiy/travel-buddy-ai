@@ -23,6 +23,9 @@ final class AnimatedPolylineRenderer: MKPolylineRenderer {
     /// Current dash phase for animation
     var dashPhase: CGFloat = 0
 
+    /// Whether route is actively being built (used to optimize rendering)
+    var isActivelyBuilding: Bool = true
+
     /// Gradient colors (cyan to purple)
     private let gradientColors: [UIColor] = [
         UIColor(red: 0.2, green: 0.85, blue: 0.9, alpha: 1.0),   // Cyan
@@ -50,16 +53,23 @@ final class AnimatedPolylineRenderer: MKPolylineRenderer {
 
         let path = createPath(for: polyline, zoomScale: zoomScale)
 
-        // Draw glow effect
-        drawGlow(path: path, in: context, zoomScale: zoomScale)
+        // PERFORMANCE FIX (2026-01-31): Skip heavy effects during active building
+        // to improve frame rate on real devices
 
-        // Draw shadow
-        drawShadow(path: path, in: context, zoomScale: zoomScale)
+        if !isActivelyBuilding {
+            // Draw glow effect (only when animation complete)
+            drawGlow(path: path, in: context, zoomScale: zoomScale)
+
+            // Draw shadow (only when animation complete)
+            drawShadow(path: path, in: context, zoomScale: zoomScale)
+        }
 
         // Draw main stroke with gradient
-        if useGradient {
+        if useGradient && !isActivelyBuilding {
+            // Full gradient (only when animation complete)
             drawGradientStroke(path: path, in: context, zoomScale: zoomScale)
         } else {
+            // Simpler solid stroke during building (better performance)
             drawSolidStroke(path: path, in: context, zoomScale: zoomScale)
         }
 

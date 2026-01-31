@@ -165,8 +165,12 @@ final class CitySearchService: NSObject, ObservableObject {
             let placemark = mapItem.placemark
             let coordinate = placemark.coordinate
 
-            // Extract city and country - prefer locality for clean city name
-            let cityName = placemark.locality ?? extractCleanCityName(from: placemark.name ?? result.name)
+            // CRITICAL FIX (2026-01-31): Validate that this is actually a city (has locality)
+            guard let cityName = placemark.locality else {
+                print("⚠️ Skipping '\(result.name)' - not a city (no locality)")
+                return nil
+            }
+
             let country = placemark.country ?? result.country
 
             return CitySearchResult(
@@ -212,8 +216,12 @@ final class CitySearchService: NSObject, ObservableObject {
 
             let placemark = mapItem.placemark
 
-            // Extract city name - prefer locality for clean name, fallback to cleaned title
-            let cityName = placemark.locality ?? extractCleanCityName(from: placemark.name ?? completion.title)
+            // CRITICAL FIX (2026-01-31): Validate that this is actually a city (has locality)
+            guard let cityName = placemark.locality else {
+                print("⚠️ Skipping completion '\(completion.title)' - not a city (no locality)")
+                return nil
+            }
+
             let country = placemark.country ?? ""
 
             return CitySearchResult(
@@ -246,14 +254,37 @@ extension CitySearchService: MKLocalSearchCompleterDelegate {
         Task { @MainActor in
             let results = completer.results
 
-            // Filter to likely cities (not specific addresses)
+            // CRITICAL FIX (2026-01-31): Filter to likely cities (not specific addresses or POIs)
             let cityResults = results.filter { completion in
+                let title = completion.title
+                let subtitle = completion.subtitle
+
                 // Skip results that look like specific addresses (contain numbers)
-                let hasNumbers = completion.title.contains(where: { $0.isNumber })
+                let hasNumbers = title.contains(where: { $0.isNumber })
                 if hasNumbers { return false }
 
                 // Skip results with very long titles (likely addresses)
-                if completion.title.count > 50 { return false }
+                if title.count > 50 { return false }
+
+                // Skip results that contain street/building keywords
+                let lowerTitle = title.lowercased()
+                let streetKeywords = ["street", "avenue", "road", "lane", "drive", "boulevard",
+                                     "улица", "проспект", "переулок", "бульвар",
+                                     "rue", "strasse", "via", "calle"]
+                for keyword in streetKeywords {
+                    if lowerTitle.contains(keyword) { return false }
+                }
+
+                // Skip POIs (restaurants, hotels, etc)
+                let poiKeywords = ["restaurant", "hotel", "cafe", "museum", "airport",
+                                  "ресторан", "отель", "кафе", "музей", "аэропорт"]
+                for keyword in poiKeywords {
+                    if lowerTitle.contains(keyword) { return false }
+                }
+
+                // Prefer results where subtitle looks like a country/region
+                // (Cities usually have "Country" or "Region, Country" in subtitle)
+                if subtitle.isEmpty { return false }
 
                 return true
             }

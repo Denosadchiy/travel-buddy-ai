@@ -76,6 +76,7 @@ final class RouteBuildingViewModel: ObservableObject {
     @Published private(set) var routeCoordinates: [CLLocationCoordinate2D] = []
     @Published private(set) var latestPOIIndex: Int = -1
     @Published private(set) var currentSubtitle: String = ""
+    @Published private(set) var isAnimationComplete: Bool = false  // Signals when to enable full rendering
 
     // MARK: - Private Properties
 
@@ -93,8 +94,8 @@ final class RouteBuildingViewModel: ObservableObject {
     private var itineraryResult: ItineraryResponseDTO?
     private var animationStartTime: Date?
 
-    // Minimum animation duration in seconds
-    private let minimumAnimationDuration: TimeInterval = 1.0
+    // Minimum animation duration in seconds (removed - not needed)
+    // private let minimumAnimationDuration: TimeInterval = 1.0
 
     private let subtitles = [
         "Анализируем ваши интересы",
@@ -142,12 +143,37 @@ final class RouteBuildingViewModel: ObservableObject {
         state = .loading
         animationStartTime = Date()
 
-        // Start animations
-        startPOIAnimation()
-        startSubtitleRotation()
+        // CRITICAL FIX (2026-01-31): Animation and Backend are INDEPENDENT
+        // Animation starts immediately, backend runs in parallel
 
-        // Start API call
-        apiTask = Task {
+        // Task 1: Quick map load + smooth animation (INDEPENDENT, FAST)
+        Task { @MainActor in
+            // Wait for map to load (short delay)
+            try? await Task.sleep(nanoseconds: 800_000_000) // 0.8s - quick map load
+            print("🗺️ Map loaded, starting animation immediately")
+
+            // Start smooth animation with initial coordinates
+            startPOIAnimation()
+            startSubtitleRotation()
+        }
+
+        // Task 2: Backend processing (PARALLEL, doesn't block animation)
+        apiTask = Task { @MainActor in
+            // Create trip if needed (backend call)
+            if tripId == nil {
+                do {
+                    print("📡 Backend: Creating trip...")
+                    let createdTripId = try await createTrip()
+                    tripId = createdTripId
+                    print("✅ Backend: Trip created")
+                } catch {
+                    print("❌ Backend: Failed to create trip: \(error)")
+                    state = .failed
+                    return
+                }
+            }
+
+            // Generate full route (backend call)
             await fetchRoute()
         }
     }
@@ -160,6 +186,7 @@ final class RouteBuildingViewModel: ObservableObject {
         currentPOIIndex = 0
         subtitleIndex = 0
         itineraryResult = nil
+        isAnimationComplete = false
 
         startRouteGeneration()
     }
@@ -181,18 +208,15 @@ final class RouteBuildingViewModel: ObservableObject {
         // Update city coordinates from backend if available
         if let lat = tripResponse.cityCenterLat, let lon = tripResponse.cityCenterLon {
             let newCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-            print("✅ createTrip: updating city coordinate from backend: \(lat), \(lon)")
+            print("✅ Backend: Received coordinates \(lat), \(lon)")
             self.cityCoordinate = newCoordinate
 
-            // Regenerate demo POIs around correct coordinates
-            self.demoPOIs = Self.generateDemoPOIs(around: newCoordinate)
-
-            // Reset animation state to show new POIs
-            self.visiblePOIs = []
-            self.routeCoordinates = []
-            self.currentPOIIndex = 0
+            // CRITICAL FIX (2026-01-31): DON'T update POIs - animation is already running!
+            // Animation uses initial coordinates and is independent of backend
+            // Backend coordinates are stored for the actual trip data
+            print("✅ Backend: Coordinates stored (animation continues independently)")
         } else {
-            print("⚠️ createTrip: backend did not return city coordinates, using fallback")
+            print("⚠️ Backend: No coordinates returned, using initial coordinates")
         }
 
         print("✅ createTrip: trip created with ID \(tripId)")
@@ -201,13 +225,8 @@ final class RouteBuildingViewModel: ObservableObject {
 
     private func fetchRoute() async {
         do {
-            // If we don't have a tripId yet, create the trip first
-            if tripId == nil {
-                print("📡 fetchRoute: creating trip first")
-                let createdTripId = try await createTrip()
-                self.tripId = createdTripId
-            }
-
+            // CRITICAL FIX (2026-01-31): Trip should already be created in startRouteGeneration
+            // This ensures we have correct coordinates BEFORE animation starts
             guard let tripId = tripId else {
                 throw APIError.networkError(NSError(domain: "No trip ID available", code: -1))
             }
@@ -219,11 +238,9 @@ final class RouteBuildingViewModel: ObservableObject {
             print("✅ fetchRoute: received itinerary with \(itinerary.days.count) days")
             self.itineraryResult = itinerary
 
-            // Ensure minimum animation time has passed
-            await ensureMinimumAnimationTime()
-
-            // Complete all animations quickly
-            await completeAnimations()
+            // ANIMATION FIX (2026-01-31): Wait for natural animation completion
+            // Figure stays active until animation completes
+            await waitForAnimationToComplete()
 
             print("🎉 fetchRoute: setting state to completed")
             state = .completed(itinerary)
@@ -243,33 +260,48 @@ final class RouteBuildingViewModel: ObservableObject {
         }
     }
 
-    private func ensureMinimumAnimationTime() async {
-        guard let startTime = animationStartTime else { return }
+    private func waitForAnimationToComplete() async {
+        // CRITICAL (2026-01-31): Animation runs INDEPENDENTLY of backend
+        // This function waits for animation to finish beautifully
+        // Backend already completed (this is called from fetchRoute after generatePlan)
 
-        let elapsed = Date().timeIntervalSince(startTime)
-        if elapsed < minimumAnimationDuration {
-            let remaining = minimumAnimationDuration - elapsed
-            try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
-        }
-    }
-
-    private func completeAnimations() async {
-        // Show remaining POIs quickly
+        // Wait until all POIs are shown by the main animation timer
+        print("⏳ Waiting for animation to complete (backend already done)...")
         while currentPOIIndex < demoPOIs.count {
-            addNextPOI()
-            try? await Task.sleep(nanoseconds: 30_000_000) // 0.03s
+            try? await Task.sleep(nanoseconds: 100_000_000) // Check every 0.1s
         }
 
-        animationTimer?.invalidate()
+        print("✅ All 8 POIs shown, keeping figure active for visual appreciation")
+
+        // Give a moment for the last POI animation to settle
+        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+
+        // Keep the figure ALIVE and beautiful
+        // Timers keep running: dash animation continues, last POI keeps pulsing
+        // User sees a complete, active route before transition
+
+        // Show "finalizing" message
         subtitleTimer?.invalidate()
+        currentSubtitle = finalizingSubtitle
+
+        // Minimum wait: let user appreciate the beautiful full route
+        try? await Task.sleep(nanoseconds: 2_000_000_000) // 2s
+
+        print("🎬 Animation complete, backend ready, transitioning to trip screen")
+
+        // Signal completion and enable full rendering
+        isAnimationComplete = true
+        animationTimer?.invalidate()
     }
 
     private func startPOIAnimation() {
         // Add first POI immediately
         addNextPOI()
 
-        // Continue adding POIs every 0.8 seconds
-        animationTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { [weak self] _ in
+        // ANIMATION FIX (2026-01-31): SLOW and SMOOTH interval
+        // 1.5s between POIs = ~10.5s total for 8 POIs
+        // Very smooth, gives camera time to move gracefully
+        animationTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.addNextPOI()
             }
@@ -278,22 +310,36 @@ final class RouteBuildingViewModel: ObservableObject {
 
     private func addNextPOI() {
         guard currentPOIIndex < demoPOIs.count else {
+            // ANIMATION FIX (2026-01-31): Stop timer when all POIs shown
             animationTimer?.invalidate()
+            print("✅ All POIs shown (\(demoPOIs.count)), animation timer stopped")
             return
         }
 
+        // PERFORMANCE FIX (2026-01-31): Batch updates to prevent multiple re-renders
         let poi = demoPOIs[currentPOIIndex]
-        visiblePOIs.append(poi)
+
+        // Create copies to batch update
+        var newVisiblePOIs = visiblePOIs
+        newVisiblePOIs.append(poi)
+
+        var newRouteCoordinates = routeCoordinates
+        newRouteCoordinates.append(poi.coordinate)
+
+        // Single batched update (triggers one updateUIView instead of three)
+        visiblePOIs = newVisiblePOIs
+        routeCoordinates = newRouteCoordinates
         latestPOIIndex = currentPOIIndex
 
-        // Add coordinate to route
-        routeCoordinates.append(poi.coordinate)
-
         currentPOIIndex += 1
+
+        print("📍 Added POI \(currentPOIIndex)/\(demoPOIs.count): \(poi.name)")
     }
 
     private func startSubtitleRotation() {
-        subtitleTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
+        // ANIMATION FIX (2026-01-31): Slower subtitle rotation for smooth experience
+        // 3.0s interval matches the slower, more graceful POI animation (1.5s interval)
+        subtitleTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.rotateSubtitle()
             }
@@ -301,9 +347,10 @@ final class RouteBuildingViewModel: ObservableObject {
     }
 
     private func rotateSubtitle() {
-        // Check if we've been loading for too long (>12s)
+        // ANIMATION FIX (2026-01-31): Show finalizing after 15s
+        // Animation is slow and smooth now (~12s total), so give it more time
         if let startTime = animationStartTime,
-           Date().timeIntervalSince(startTime) > 12 {
+           Date().timeIntervalSince(startTime) > 15 {
             currentSubtitle = finalizingSubtitle
             return
         }

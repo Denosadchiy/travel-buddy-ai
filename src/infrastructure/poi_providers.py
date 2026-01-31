@@ -678,12 +678,22 @@ class GooglePlacesPOIProvider(POIProvider):
             return False
 
         def normalize_city(city_name: str) -> str:
-            """Normalize city name for comparison."""
-            normalized = city_name.lower().strip()
-            # Remove common country names
+            """
+            Normalize city name for comparison.
+
+            CRITICAL FIX (2026-01-31): Handle Turkish characters and expand country suffixes.
+            """
+            # First handle Turkish-specific characters before lowercasing
+            # İ (uppercase dotted i) → i, I (uppercase dotless i) → ı
+            normalized = city_name.replace("İ", "i").replace("I", "ı")
+            normalized = normalized.lower().strip()
+
+            # Remove common country names (expanded list)
             for suffix in [", russia", ", france", ", usa", ", uk", ", united states",
                           ", united kingdom", ", russian federation", ", italy",
-                          ", spain", ", germany", ", netherlands"]:
+                          ", spain", ", germany", ", netherlands", ", turkey",
+                          ", türkiye", ", turkiye", ", china", ", japan",
+                          ", united arab emirates", ", uae", ", thailand"]:
                 if normalized.endswith(suffix):
                     normalized = normalized[:-len(suffix)].strip()
             return normalized
@@ -692,17 +702,13 @@ class GooglePlacesPOIProvider(POIProvider):
         address_normalized = normalize_city(place.formatted_address)
 
         # Map city name variations (handles multilingual)
+        # CRITICAL FIX (2026-01-31): Extended city mapping to support international destinations
         city_name_map = {
+            # Europe
             "paris": ["paris", "париж"],
             "париж": ["paris", "париж"],
-            "moscow": ["moscow", "москва"],
-            "москва": ["moscow", "москва"],
-            "saint petersburg": ["saint petersburg", "санкт-петербург", "st petersburg", "st. petersburg"],
-            "санкт-петербург": ["saint petersburg", "санкт-петербург", "st petersburg", "st. petersburg"],
             "london": ["london", "лондон"],
             "лондон": ["london", "лондон"],
-            "new york": ["new york", "нью-йорк"],
-            "нью-йорк": ["new york", "нью-йорк"],
             "rome": ["rome", "рим", "roma"],
             "рим": ["rome", "рим", "roma"],
             "madrid": ["madrid", "мадрид"],
@@ -713,6 +719,67 @@ class GooglePlacesPOIProvider(POIProvider):
             "берлин": ["berlin", "берлин"],
             "amsterdam": ["amsterdam", "амстердам"],
             "амстердам": ["amsterdam", "амстердам"],
+            "vienna": ["vienna", "вена", "wien"],
+            "вена": ["vienna", "вена", "wien"],
+            "prague": ["prague", "прага", "praha"],
+            "прага": ["prague", "прага", "praha"],
+            "budapest": ["budapest", "будапешт"],
+            "будапешт": ["budapest", "будапешт"],
+            "athens": ["athens", "афины", "athina"],
+            "афины": ["athens", "афины", "athina"],
+            "lisbon": ["lisbon", "лиссабон", "lisboa"],
+            "лиссабон": ["lisbon", "лиссабон", "lisboa"],
+            "istanbul": ["istanbul", "стамбул", "İstanbul", "ıstanbul"],  # Turkish İ normalization
+            "стамбул": ["istanbul", "стамбул", "İstanbul", "ıstanbul"],
+            "ıstanbul": ["istanbul", "стамбул", "İstanbul", "ıstanbul"],
+
+            # Russia & CIS
+            "moscow": ["moscow", "москва"],
+            "москва": ["moscow", "москва"],
+            "saint petersburg": ["saint petersburg", "санкт-петербург", "st petersburg", "st. petersburg"],
+            "санкт-петербург": ["saint petersburg", "санкт-петербург", "st petersburg", "st. petersburg"],
+            "kazan": ["kazan", "казань"],
+            "казань": ["kazan", "казань"],
+            "sochi": ["sochi", "сочи"],
+            "сочи": ["sochi", "сочи"],
+
+            # Americas
+            "new york": ["new york", "нью-йорк"],
+            "нью-йорк": ["new york", "нью-йорк"],
+            "los angeles": ["los angeles", "лос-анджелес"],
+            "лос-анджелес": ["los angeles", "лос-анджелес"],
+            "miami": ["miami", "майами"],
+            "майами": ["miami", "майами"],
+            "mexico city": ["mexico city", "мехико", "ciudad de méxico"],
+            "мехико": ["mexico city", "мехико", "ciudad de méxico"],
+
+            # Asia
+            "tokyo": ["tokyo", "токио", "東京"],
+            "токио": ["tokyo", "токио", "東京"],
+            "shanghai": ["shanghai", "шанхай", "上海"],
+            "шанхай": ["shanghai", "шанхай", "上海"],
+            "beijing": ["beijing", "пекин", "北京"],
+            "пекин": ["beijing", "пекин", "北京"],
+            "hong kong": ["hong kong", "гонконг", "香港"],
+            "гонконг": ["hong kong", "гонконг", "香港"],
+            "singapore": ["singapore", "сингапур"],
+            "сингапур": ["singapore", "сингапур"],
+            "dubai": ["dubai", "дубай"],
+            "дубай": ["dubai", "дубай"],
+            "bangkok": ["bangkok", "бангкок", "กรุงเทพมหานคร"],
+            "бангкок": ["bangkok", "бангкок", "กรุงเทพมหานคร"],
+            "seoul": ["seoul", "сеул", "서울"],
+            "сеул": ["seoul", "сеул", "서울"],
+            "bali": ["bali", "бали"],
+            "бали": ["bali", "бали"],
+            "phuket": ["phuket", "пхукет"],
+            "пхукет": ["phuket", "пхукет"],
+
+            # Middle East
+            "tel aviv": ["tel aviv", "тель-авив"],
+            "тель-авив": ["tel aviv", "тель-авив"],
+            "jerusalem": ["jerusalem", "иерусалим"],
+            "иерусалим": ["jerusalem", "иерусалим"],
         }
 
         # Get all possible variations

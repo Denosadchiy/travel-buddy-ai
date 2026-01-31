@@ -55,7 +55,8 @@ struct RouteBuildingView: View {
                 centerCoordinate: cityCoordinate,
                 visiblePOIs: viewModel.visiblePOIs,
                 routeCoordinates: viewModel.routeCoordinates,
-                latestPOIIndex: viewModel.latestPOIIndex
+                latestPOIIndex: viewModel.latestPOIIndex,
+                isAnimationComplete: viewModel.isAnimationComplete
             )
             .ignoresSafeArea()
 

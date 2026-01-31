@@ -155,24 +155,26 @@ final class POIAnnotationView: MKAnnotationView {
         self.transform = CGAffineTransform(scaleX: 0.1, y: 0.1)
         self.alpha = 0
 
-        // Spring animation for bouncy appearance
+        // ANIMATION FIX (2026-01-31): SLOW and SMOOTH spring animation
+        // 0.7s duration, high damping (0.75) for minimal bounce, elegant feel
+        // Matches the slow, graceful pace of the overall animation
         UIView.animate(
-            withDuration: 0.5,
+            withDuration: 0.7,
             delay: 0,
-            usingSpringWithDamping: 0.5,
-            initialSpringVelocity: 1.0,
+            usingSpringWithDamping: 0.75,
+            initialSpringVelocity: 0.8,
             options: [.curveEaseOut]
         ) {
             self.alpha = 1
             self.transform = .identity
         }
 
-        // Add glow effect on appear
+        // Add glow effect on appear (slower and smoother)
         glowView.alpha = 0.8
         glowView.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
 
         UIView.animate(
-            withDuration: 0.6,
+            withDuration: 0.8,
             delay: 0.1,
             options: [.curveEaseOut]
         ) {
@@ -194,8 +196,10 @@ final class POIAnnotationView: MKAnnotationView {
     private func animatePulse() {
         guard isPulsing else { return }
 
+        // ANIMATION FIX (2026-01-31): SLOW and SMOOTH pulse (1.2s)
+        // Elegant, relaxed pulsing that draws attention without being aggressive
         UIView.animate(
-            withDuration: 1.0,
+            withDuration: 1.2,
             delay: 0,
             options: [.curveEaseOut]
         ) {
@@ -208,7 +212,7 @@ final class POIAnnotationView: MKAnnotationView {
             self.pulseView.transform = CGAffineTransform(scaleX: 0.6, y: 0.6)
             self.pulseView.alpha = 0.8
 
-            // Continue pulsing
+            // Continue pulsing (slightly longer delay for smooth loop)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 self.animatePulse()
             }

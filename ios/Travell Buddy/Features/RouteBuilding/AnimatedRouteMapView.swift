@@ -16,6 +16,7 @@ struct AnimatedRouteMapView: UIViewRepresentable {
     let visiblePOIs: [DemoPOI]
     let routeCoordinates: [CLLocationCoordinate2D]
     let latestPOIIndex: Int
+    let isAnimationComplete: Bool  // Enables full rendering when true
 
     // Zoom levels: start close, gradually zoom out
     private static let initialSpan: Double = 0.015
@@ -58,13 +59,15 @@ struct AnimatedRouteMapView: UIViewRepresentable {
     }
 
     func updateUIView(_ mapView: MKMapView, context: Context) {
-        // Update POI annotations
+        // PERFORMANCE FIX (2026-01-31): Only update what changed to prevent unnecessary re-renders
+
+        // Update POI annotations (checks for changes internally)
         updateAnnotations(mapView, context: context)
 
-        // Update route polyline
+        // Update route polyline (only if coordinates changed)
         updatePolyline(mapView, context: context)
 
-        // Animate camera when new POIs added
+        // Animate camera when new POIs added (only if count increased)
         animateCameraIfNeeded(mapView, context: context)
     }
 
@@ -155,8 +158,9 @@ struct AnimatedRouteMapView: UIViewRepresentable {
             heading: context.coordinator.currentHeading
         )
 
-        // Animate camera smoothly
-        UIView.animate(withDuration: 0.8, delay: 0, options: [.curveEaseInOut]) {
+        // ANIMATION FIX (2026-01-31): SLOW and SMOOTH camera animation (1.5s)
+        // Matches POI interval (1.5s), very graceful and cinematic movement
+        UIView.animate(withDuration: 1.5, delay: 0, options: [.curveEaseInOut]) {
             mapView.setCamera(newCamera, animated: false)
         }
     }
@@ -164,10 +168,18 @@ struct AnimatedRouteMapView: UIViewRepresentable {
     // MARK: - Annotations Update
 
     private func updateAnnotations(_ mapView: MKMapView, context: Context) {
+        // PERFORMANCE FIX (2026-01-31): Prevent duplicate annotations and clean up removed ones
         let existingAnnotations = mapView.annotations.compactMap { $0 as? RouteBuildingPOIAnnotation }
         let existingIDs = Set(existingAnnotations.map { $0.poi.id })
+        let visibleIDs = Set(visiblePOIs.map { $0.id })
 
-        // Add new POIs
+        // Remove annotations that are no longer visible (cleanup to prevent duplicates)
+        let annotationsToRemove = existingAnnotations.filter { !visibleIDs.contains($0.poi.id) }
+        if !annotationsToRemove.isEmpty {
+            mapView.removeAnnotations(annotationsToRemove)
+        }
+
+        // Add new POIs (only if not already present)
         for (index, poi) in visiblePOIs.enumerated() {
             if !existingIDs.contains(poi.id) {
                 let annotation = RouteBuildingPOIAnnotation(poi: poi, index: index)
@@ -187,8 +199,9 @@ struct AnimatedRouteMapView: UIViewRepresentable {
             }
         }
 
-        // Update pulse state on annotations
-        for annotation in existingAnnotations {
+        // Update pulse state on existing annotations (only update, don't re-add)
+        let currentAnnotations = mapView.annotations.compactMap { $0 as? RouteBuildingPOIAnnotation }
+        for annotation in currentAnnotations {
             if let view = mapView.view(for: annotation) as? POIAnnotationView {
                 if annotation.index == latestPOIIndex {
                     view.startPulse()
@@ -202,15 +215,25 @@ struct AnimatedRouteMapView: UIViewRepresentable {
     // MARK: - Polyline Update
 
     private func updatePolyline(_ mapView: MKMapView, context: Context) {
+        // PERFORMANCE FIX (2026-01-31): Only update polyline when coordinates actually change
+        let currentCount = routeCoordinates.count
+
+        // Check if coordinates changed
+        guard currentCount != context.coordinator.lastRouteCoordinatesCount else {
+            return // No change, skip expensive remove/add operations
+        }
+
+        context.coordinator.lastRouteCoordinatesCount = currentCount
+
         // Remove existing overlays
         mapView.removeOverlays(mapView.overlays)
 
-        guard routeCoordinates.count >= 2 else { return }
+        guard currentCount >= 2 else { return }
 
         // Create animated polyline
         let polyline = AnimatedPolyline(
             coordinates: routeCoordinates,
-            count: routeCoordinates.count
+            count: currentCount
         )
         polyline.isAnimating = true
 
@@ -228,6 +251,8 @@ struct AnimatedRouteMapView: UIViewRepresentable {
 
         // Route animation state
         var displayedRouteSegments: Int = 0
+        var lastRouteCoordinatesCount: Int = 0  // Track polyline changes
+        var isAnimationComplete: Bool = false  // Track when building animation finishes
 
         // Dash animation
         private var dashAnimationTimer: Timer?
@@ -253,13 +278,14 @@ struct AnimatedRouteMapView: UIViewRepresentable {
             // Stop any existing animation
             stopDashAnimation()
 
-            // Start new animation timer
-            dashAnimationTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            // ANIMATION FIX (2026-01-31): SLOW and SMOOTH dash animation (0.12s = ~8fps)
+            // Very smooth, relaxed "running dots" effect that matches the slow graceful pace
+            dashAnimationTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in
                 guard let self = self,
                       let renderer = self.currentRenderer else { return }
 
                 // Update dash phase for "running dots" effect
-                self.currentDashPhase += 2.0
+                self.currentDashPhase += 2.0  // Slower step for smoother, more elegant movement
                 if self.currentDashPhase > 100 {
                     self.currentDashPhase = 0
                 }
@@ -314,6 +340,8 @@ struct AnimatedRouteMapView: UIViewRepresentable {
                 renderer.lineJoin = .round
                 renderer.useGradient = true
                 renderer.animateDashes = true
+                // Use parent's animation state to control rendering complexity
+                renderer.isActivelyBuilding = !parent.isAnimationComplete
 
                 // Start dash animation
                 startDashAnimation(for: renderer, mapView: mapView)
