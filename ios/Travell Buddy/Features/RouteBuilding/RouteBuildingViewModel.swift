@@ -81,7 +81,7 @@ final class RouteBuildingViewModel: ObservableObject {
     // MARK: - Private Properties
 
     private var tripId: UUID?  // Made optional - will be set after trip creation
-    private var cityCoordinate: CLLocationCoordinate2D  // Made mutable to update from backend
+    @Published var cityCoordinate: CLLocationCoordinate2D  // Made @Published to update map when backend returns coordinates
     private let apiClient: TripPlanningAPIClientProtocol
     private let tripRequest: TripCreateRequestDTO?  // Parameters for creating trip
 
@@ -143,29 +143,18 @@ final class RouteBuildingViewModel: ObservableObject {
         state = .loading
         animationStartTime = Date()
 
-        // CRITICAL FIX (2026-01-31): Animation and Backend are INDEPENDENT
-        // Animation starts immediately, backend runs in parallel
+        // Start subtitle rotation immediately (shows loading text)
+        startSubtitleRotation()
 
-        // Task 1: Quick map load + smooth animation (INDEPENDENT, FAST)
-        Task { @MainActor in
-            // Wait for map to load (short delay)
-            try? await Task.sleep(nanoseconds: 800_000_000) // 0.8s - quick map load
-            print("🗺️ Map loaded, starting animation immediately")
-
-            // Start smooth animation with initial coordinates
-            startPOIAnimation()
-            startSubtitleRotation()
-        }
-
-        // Task 2: Backend processing (PARALLEL, doesn't block animation)
+        // Get correct coordinates from backend FIRST, then start animation
         apiTask = Task { @MainActor in
-            // Create trip if needed (backend call)
+            // Create trip first to get correct city coordinates
             if tripId == nil {
                 do {
-                    print("📡 Backend: Creating trip...")
+                    print("📡 Backend: Creating trip to get correct coordinates...")
                     let createdTripId = try await createTrip()
                     tripId = createdTripId
-                    print("✅ Backend: Trip created")
+                    print("✅ Backend: Trip created, coordinates updated")
                 } catch {
                     print("❌ Backend: Failed to create trip: \(error)")
                     state = .failed
@@ -173,7 +162,11 @@ final class RouteBuildingViewModel: ObservableObject {
                 }
             }
 
-            // Generate full route (backend call)
+            // Now start animation with correct coordinates
+            print("🗺️ Starting animation with correct city coordinates")
+            startPOIAnimation()
+
+            // Generate full route in parallel with animation
             await fetchRoute()
         }
     }
@@ -208,15 +201,14 @@ final class RouteBuildingViewModel: ObservableObject {
         // Update city coordinates from backend if available
         if let lat = tripResponse.cityCenterLat, let lon = tripResponse.cityCenterLon {
             let newCoordinate = CLLocationCoordinate2D(latitude: lat, longitude: lon)
-            print("✅ Backend: Received coordinates \(lat), \(lon)")
+            print("✅ createTrip: updating city coordinate from backend: \(lat), \(lon)")
             self.cityCoordinate = newCoordinate
 
-            // CRITICAL FIX (2026-01-31): DON'T update POIs - animation is already running!
-            // Animation uses initial coordinates and is independent of backend
-            // Backend coordinates are stored for the actual trip data
-            print("✅ Backend: Coordinates stored (animation continues independently)")
+            // Regenerate demo POIs around correct coordinates
+            self.demoPOIs = Self.generateDemoPOIs(around: newCoordinate)
+            print("✅ createTrip: demo POIs regenerated around correct coordinates")
         } else {
-            print("⚠️ Backend: No coordinates returned, using initial coordinates")
+            print("⚠️ createTrip: backend did not return city coordinates, using fallback")
         }
 
         print("✅ createTrip: trip created with ID \(tripId)")
@@ -225,8 +217,7 @@ final class RouteBuildingViewModel: ObservableObject {
 
     private func fetchRoute() async {
         do {
-            // CRITICAL FIX (2026-01-31): Trip should already be created in startRouteGeneration
-            // This ensures we have correct coordinates BEFORE animation starts
+            // Trip should already be created in startRouteGeneration
             guard let tripId = tripId else {
                 throw APIError.networkError(NSError(domain: "No trip ID available", code: -1))
             }

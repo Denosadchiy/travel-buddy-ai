@@ -34,6 +34,7 @@ struct NewTripView: View {
     @State private var showTravelersPicker: Bool = false
     @State private var travelersSheetDetent: PresentationDetent = .height(520)
     @State private var selectedInterests: Set<String> = ["Гастро", "Искусство"]
+    @State private var selectedCityCoordinate: CLLocationCoordinate2D?  // Coordinates from autocomplete
 
     // Route building state - using Identifiable item for fullScreenCover
     @State private var routeBuildingData: RouteBuildingData?
@@ -291,14 +292,27 @@ struct NewTripView: View {
 
     private var citySection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            DestinationAutocompleteField(cityName: $selectedCity, placeholder: "Куда поедем?")
-                .zIndex(10)
+            DestinationAutocompleteField(
+                cityName: $selectedCity,
+                placeholder: "Куда поедем?",
+                onCitySelected: { result in
+                    // Save coordinates from autocomplete selection
+                    if let coordinate = result.coordinate {
+                        print("📍 City selected from autocomplete: \(result.name) at \(coordinate.latitude), \(coordinate.longitude)")
+                        selectedCityCoordinate = coordinate
+                    }
+                }
+            )
+            .zIndex(10)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
                     ForEach(popularCities, id: \.self) { city in
                         Button(action: {
                             selectedCity = city
+                            // Clear autocomplete coordinates when selecting from popular cities
+                            // (will use defaultCoordinate fallback)
+                            selectedCityCoordinate = nil
                         }) {
                             Text(city)
                                 .font(.system(size: 14, weight: .medium, design: .rounded))
@@ -565,9 +579,15 @@ struct NewTripView: View {
         print("🚀 openTripPlan called for city: \(selectedCity)")
         print("🧭 Params: start=\(startDate) end=\(endDate) travelers=\(adultsCount + childrenCount) budget=\(selectedBudget) interests=\(Array(selectedInterests).sorted())")
 
-        // Use default coordinates immediately (no async geocoding delay)
-        let coordinate = Self.defaultCoordinate(for: selectedCity)
-        print("📍 Using coordinate: \(coordinate.latitude), \(coordinate.longitude)")
+        // Use coordinates from autocomplete if available, otherwise fallback to default
+        let coordinate: CLLocationCoordinate2D
+        if let autocompleteCoordinate = selectedCityCoordinate {
+            coordinate = autocompleteCoordinate
+            print("📍 Using autocomplete coordinate: \(coordinate.latitude), \(coordinate.longitude)")
+        } else {
+            coordinate = Self.defaultCoordinate(for: selectedCity)
+            print("📍 Using default coordinate: \(coordinate.latitude), \(coordinate.longitude)")
+        }
 
         // Format dates as YYYY-MM-DD
         let dateFormatter = DateFormatter()
@@ -609,25 +629,43 @@ struct NewTripView: View {
     }
 
     private static func defaultCoordinate(for city: String) -> CLLocationCoordinate2D {
-        // Common city coordinates
+        // Common city coordinates - MUST include all popularCities!
         let cityCoordinates: [String: CLLocationCoordinate2D] = [
+            // Popular cities (from popularCities array)
+            "Париж": CLLocationCoordinate2D(latitude: 48.8566, longitude: 2.3522),
             "Рим": CLLocationCoordinate2D(latitude: 41.9028, longitude: 12.4964),
+            "Дубай": CLLocationCoordinate2D(latitude: 25.2048, longitude: 55.2708),
+            "Москва": CLLocationCoordinate2D(latitude: 55.7558, longitude: 37.6173),
+            "Лондон": CLLocationCoordinate2D(latitude: 51.5074, longitude: -0.1278),
+            "Барселона": CLLocationCoordinate2D(latitude: 41.3851, longitude: 2.1734),
+            "Пекин": CLLocationCoordinate2D(latitude: 39.9042, longitude: 116.4074),
+            // English names
+            "Paris": CLLocationCoordinate2D(latitude: 48.8566, longitude: 2.3522),
             "Rome": CLLocationCoordinate2D(latitude: 41.9028, longitude: 12.4964),
+            "Dubai": CLLocationCoordinate2D(latitude: 25.2048, longitude: 55.2708),
+            "Moscow": CLLocationCoordinate2D(latitude: 55.7558, longitude: 37.6173),
+            "London": CLLocationCoordinate2D(latitude: 51.5074, longitude: -0.1278),
+            "Barcelona": CLLocationCoordinate2D(latitude: 41.3851, longitude: 2.1734),
+            "Beijing": CLLocationCoordinate2D(latitude: 39.9042, longitude: 116.4074),
+            // Other common cities
             "Стамбул": CLLocationCoordinate2D(latitude: 41.0082, longitude: 28.9784),
             "Istanbul": CLLocationCoordinate2D(latitude: 41.0082, longitude: 28.9784),
             "Бали": CLLocationCoordinate2D(latitude: -8.3405, longitude: 115.0920),
             "Bali": CLLocationCoordinate2D(latitude: -8.3405, longitude: 115.0920),
             "Тбилиси": CLLocationCoordinate2D(latitude: 41.7151, longitude: 44.8271),
             "Tbilisi": CLLocationCoordinate2D(latitude: 41.7151, longitude: 44.8271),
-            "Париж": CLLocationCoordinate2D(latitude: 48.8566, longitude: 2.3522),
-            "Paris": CLLocationCoordinate2D(latitude: 48.8566, longitude: 2.3522),
-            "Барселона": CLLocationCoordinate2D(latitude: 41.3851, longitude: 2.1734),
-            "Barcelona": CLLocationCoordinate2D(latitude: 41.3851, longitude: 2.1734),
             "Нью-Йорк": CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060),
             "New York": CLLocationCoordinate2D(latitude: 40.7128, longitude: -74.0060),
         ]
 
-        return cityCoordinates[city] ?? CLLocationCoordinate2D(latitude: 41.9028, longitude: 12.4964)
+        if let coordinate = cityCoordinates[city] {
+            print("📍 defaultCoordinate: found mapping for '\(city)' -> \(coordinate.latitude), \(coordinate.longitude)")
+            return coordinate
+        } else {
+            print("⚠️ defaultCoordinate: NO MAPPING for '\(city)', using Paris as default")
+            // Use Paris as default (more central in Europe than Rome)
+            return CLLocationCoordinate2D(latitude: 48.8566, longitude: 2.3522)
+        }
     }
 
     private func mapBudgetToAPI(_ budget: String) -> String {

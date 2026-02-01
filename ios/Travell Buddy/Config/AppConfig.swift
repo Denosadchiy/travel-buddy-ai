@@ -20,17 +20,14 @@ enum APIEnvironment {
         case .staging:
             return URL(string: "https://staging-api.travelbuddy.com/api")!
         case .production:
-            // TODO: Replace with your actual Railway URL after deployment
-            // Example: https://travel-buddy-api-production-XXXX.up.railway.app/api
-            return URL(string: "https://api.travelbuddy.com/api")!
+            return URL(string: "https://api-production-8a05.up.railway.app/api")!
         }
     }
 }
 
 struct AppConfig {
     /// Current environment
-    /// IMPORTANT: Change to .production before building for TestFlight
-    static let environment: APIEnvironment = .development
+    static let environment: APIEnvironment = .production
 
     /// Base URL for API requests
     static var baseURL: URL { environment.baseURL }

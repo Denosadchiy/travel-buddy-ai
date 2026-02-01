@@ -169,14 +169,21 @@ struct DestinationAutocompleteField: View {
 
         // Resolve coordinates and get clean city name
         Task {
+            print("🔍 selectCity: resolving '\(result.name)'...")
             if let resolved = await searchService.resolveCity(result) {
                 // Use resolved city name (cleaner, from placemark.locality)
                 cityName = resolved.name
+                if let coord = resolved.coordinate {
+                    print("✅ selectCity: resolved to '\(resolved.name)' at \(coord.latitude), \(coord.longitude)")
+                } else {
+                    print("⚠️ selectCity: resolved but NO COORDINATES for '\(resolved.name)'")
+                }
                 onCitySelected?(resolved)
             } else {
                 // Fallback: extract just the city name (first part before comma)
                 let cleanName = result.name.components(separatedBy: ",").first?.trimmingCharacters(in: .whitespaces) ?? result.name
                 cityName = cleanName
+                print("⚠️ selectCity: resolveCity returned nil, using fallback name: '\(cleanName)'")
                 onCitySelected?(result)
             }
         }

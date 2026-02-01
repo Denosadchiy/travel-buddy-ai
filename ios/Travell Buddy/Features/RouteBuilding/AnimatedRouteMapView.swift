@@ -54,12 +54,16 @@ struct AnimatedRouteMapView: UIViewRepresentable {
         // Store initial state in coordinator
         context.coordinator.lastPOICount = 0
         context.coordinator.currentHeading = 0
+        context.coordinator.lastCenterCoordinate = centerCoordinate
 
         return mapView
     }
 
     func updateUIView(_ mapView: MKMapView, context: Context) {
         // PERFORMANCE FIX (2026-01-31): Only update what changed to prevent unnecessary re-renders
+
+        // FIX: Update camera center when coordinates change (before POIs appear)
+        updateCameraCenterIfNeeded(mapView, context: context)
 
         // Update POI annotations (checks for changes internally)
         updateAnnotations(mapView, context: context)
@@ -69,6 +73,45 @@ struct AnimatedRouteMapView: UIViewRepresentable {
 
         // Animate camera when new POIs added (only if count increased)
         animateCameraIfNeeded(mapView, context: context)
+    }
+
+    // MARK: - Camera Center Update
+
+    private func updateCameraCenterIfNeeded(_ mapView: MKMapView, context: Context) {
+        // Validate new coordinates
+        guard CLLocationCoordinate2DIsValid(centerCoordinate),
+              !centerCoordinate.latitude.isNaN,
+              !centerCoordinate.longitude.isNaN else {
+            return
+        }
+
+        // Check if coordinates actually changed
+        let lastCenter = context.coordinator.lastCenterCoordinate
+        let latDiff = abs(lastCenter.latitude - centerCoordinate.latitude)
+        let lonDiff = abs(lastCenter.longitude - centerCoordinate.longitude)
+
+        // Only update if difference is significant (> 0.01 degrees ≈ 1km)
+        guard latDiff > 0.01 || lonDiff > 0.01 else {
+            return
+        }
+
+        // Store new center
+        context.coordinator.lastCenterCoordinate = centerCoordinate
+
+        print("🗺️ AnimatedRouteMapView: Moving camera to new center: \(centerCoordinate.latitude), \(centerCoordinate.longitude)")
+
+        // Update camera to new center
+        let newCamera = MKMapCamera(
+            lookingAtCenter: centerCoordinate,
+            fromDistance: Self.cameraAltitude,
+            pitch: Self.cameraPitch,
+            heading: context.coordinator.currentHeading
+        )
+
+        // Animate camera move
+        UIView.animate(withDuration: 0.5, delay: 0, options: [.curveEaseOut]) {
+            mapView.setCamera(newCamera, animated: false)
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -248,6 +291,7 @@ struct AnimatedRouteMapView: UIViewRepresentable {
         // Camera animation state
         var lastPOICount: Int = 0
         var currentHeading: Double = 0
+        var lastCenterCoordinate: CLLocationCoordinate2D = CLLocationCoordinate2D(latitude: 0, longitude: 0)
 
         // Route animation state
         var displayedRouteSegments: Int = 0

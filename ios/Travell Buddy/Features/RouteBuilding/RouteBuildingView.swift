@@ -52,7 +52,7 @@ struct RouteBuildingView: View {
 
             // MARK: - Live Map Background
             AnimatedRouteMapView(
-                centerCoordinate: cityCoordinate,
+                centerCoordinate: viewModel.cityCoordinate,
                 visiblePOIs: viewModel.visiblePOIs,
                 routeCoordinates: viewModel.routeCoordinates,
                 latestPOIIndex: viewModel.latestPOIIndex,

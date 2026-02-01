@@ -165,14 +165,20 @@ final class CitySearchService: NSObject, ObservableObject {
             let placemark = mapItem.placemark
             let coordinate = placemark.coordinate
 
-            // CRITICAL FIX (2026-01-31): Validate that this is actually a city (has locality)
-            guard let cityName = placemark.locality else {
-                print("⚠️ Skipping '\(result.name)' - not a city (no locality)")
-                return nil
+            // FIX (2026-02-02): Always return coordinates, even if locality is missing
+            // Some cities may not have locality field set, but we still need their coordinates
+            let cityName: String
+            if let locality = placemark.locality {
+                cityName = locality
+            } else {
+                // Fallback: use original name (cleaned)
+                cityName = extractCleanCityName(from: result.name)
+                print("⚠️ No locality for '\(result.name)', using original name: \(cityName)")
             }
 
             let country = placemark.country ?? result.country
 
+            print("✅ Resolved city: \(cityName) at \(coordinate.latitude), \(coordinate.longitude)")
             return CitySearchResult(
                 name: cityName,
                 country: country,
@@ -215,20 +221,26 @@ final class CitySearchService: NSObject, ObservableObject {
             }
 
             let placemark = mapItem.placemark
+            let coordinate = placemark.coordinate
 
-            // CRITICAL FIX (2026-01-31): Validate that this is actually a city (has locality)
-            guard let cityName = placemark.locality else {
-                print("⚠️ Skipping completion '\(completion.title)' - not a city (no locality)")
-                return nil
+            // FIX (2026-02-02): Always return coordinates, even if locality is missing
+            let cityName: String
+            if let locality = placemark.locality {
+                cityName = locality
+            } else {
+                // Fallback: use completion title (cleaned)
+                cityName = completion.title.components(separatedBy: ",").first?.trimmingCharacters(in: .whitespaces) ?? completion.title
+                print("⚠️ No locality for '\(completion.title)', using: \(cityName)")
             }
 
             let country = placemark.country ?? ""
 
+            print("✅ Resolved completion: \(cityName) at \(coordinate.latitude), \(coordinate.longitude)")
             return CitySearchResult(
                 name: cityName,
                 country: country,
                 subtitle: completion.subtitle,
-                coordinate: placemark.coordinate
+                coordinate: coordinate
             )
         } catch {
             print("Failed to resolve completion: \(error)")

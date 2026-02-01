@@ -144,26 +144,32 @@ final class AuthGatingManager: ObservableObject {
     ///   - serverIsLocked: Optional server-side lock status. If provided and false, respects FREEMIUM_ENABLED=false setting.
     /// - Returns: true if day should be locked (require auth), false if accessible
     func isDayLocked(dayIndex: Int, serverIsLocked: Bool? = nil) -> Bool {
+        // FIX (2026-02-01): Freemium disabled - all days are accessible
+        return false
+
         // If server explicitly says content is unlocked, respect it (FREEMIUM_ENABLED=false)
-        if let serverLock = serverIsLocked, !serverLock {
-            return false
-        }
+        // if let serverLock = serverIsLocked, !serverLock {
+        //     return false
+        // }
 
         // Otherwise use client-side freemium logic (Day 2+ require auth for guests)
-        return !AuthManager.shared.isAuthenticated && dayIndex > 0
+        // return !AuthManager.shared.isAuthenticated && dayIndex > 0
     }
 
     /// Check if map requires authentication.
     /// - Parameter serverIsLocked: Optional server-side lock status. If provided and false, respects FREEMIUM_ENABLED=false setting.
     /// - Returns: true if map should be locked (require auth), false if accessible
     func isMapLocked(serverIsLocked: Bool? = nil) -> Bool {
+        // FIX (2026-02-01): Freemium disabled - map is always accessible
+        return false
+
         // If server explicitly says content is unlocked, respect it (FREEMIUM_ENABLED=false)
-        if let serverLock = serverIsLocked, !serverLock {
-            return false
-        }
+        // if let serverLock = serverIsLocked, !serverLock {
+        //     return false
+        // }
 
         // Otherwise use client-side freemium logic (map requires auth for guests)
-        return !AuthManager.shared.isAuthenticated
+        // return !AuthManager.shared.isAuthenticated
     }
 
     // MARK: - Private
