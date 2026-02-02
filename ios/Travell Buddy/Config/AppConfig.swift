@@ -30,7 +30,12 @@ struct AppConfig {
     static let environment: APIEnvironment = .production
 
     /// Base URL for API requests
-    static var baseURL: URL { environment.baseURL }
+    static var baseURL: URL {
+        let url = environment.baseURL
+        // Debug: log the URL being used (only printed once on first access)
+        print("🔗 AppConfig.baseURL: \(url.absoluteString) (environment: \(environment))")
+        return url
+    }
 
     /// Request timeout for fast draft (90s - LLM + POI fetching can take 40-60s)
     static let fastDraftTimeout: TimeInterval = 90

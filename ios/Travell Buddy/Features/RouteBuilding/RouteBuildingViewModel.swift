@@ -152,11 +152,23 @@ final class RouteBuildingViewModel: ObservableObject {
             if tripId == nil {
                 do {
                     print("📡 Backend: Creating trip to get correct coordinates...")
+                    print("📡 Backend: Using base URL: \(AppConfig.baseURL.absoluteString)")
                     let createdTripId = try await createTrip()
                     tripId = createdTripId
-                    print("✅ Backend: Trip created, coordinates updated")
+                    print("✅ Backend: Trip created with ID: \(createdTripId), coordinates updated")
                 } catch {
                     print("❌ Backend: Failed to create trip: \(error)")
+                    print("❌ Backend: Error type: \(type(of: error))")
+                    if let apiError = error as? APIError {
+                        print("❌ Backend: APIError: \(apiError)")
+                        if case .networkError(let underlyingError) = apiError {
+                            let nsError = underlyingError as NSError
+                            print("❌ Backend: Network error - domain: \(nsError.domain), code: \(nsError.code)")
+                        }
+                        if case .httpError(let code, let msg) = apiError {
+                            print("❌ Backend: HTTP error - code: \(code), message: \(msg ?? "nil")")
+                        }
+                    }
                     state = .failed
                     return
                 }
@@ -238,6 +250,25 @@ final class RouteBuildingViewModel: ObservableObject {
         } catch {
             print("❌ Route generation failed: \(error)")
             print("❌ Error type: \(type(of: error))")
+            print("❌ Error localizedDescription: \(error.localizedDescription)")
+
+            // Log detailed error info for debugging
+            if let apiError = error as? APIError {
+                print("❌ APIError case: \(apiError)")
+                if case .networkError(let underlyingError) = apiError {
+                    let nsError = underlyingError as NSError
+                    print("❌ Network error domain: \(nsError.domain), code: \(nsError.code)")
+                    print("❌ Network error userInfo: \(nsError.userInfo)")
+                }
+                if case .httpError(let statusCode, let message) = apiError {
+                    print("❌ HTTP error: status=\(statusCode), message=\(message ?? "nil")")
+                }
+            }
+
+            if let urlError = error as? URLError {
+                print("❌ URLError code: \(urlError.code.rawValue)")
+                print("❌ URLError failingURL: \(urlError.failingURL?.absoluteString ?? "nil")")
+            }
 
             // Stop animations
             animationTimer?.invalidate()
