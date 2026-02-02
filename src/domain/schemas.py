@@ -44,6 +44,7 @@ class TripCreateRequest(BaseModel):
 
     daily_routine: Optional[DailyRoutineRequest] = Field(default=None, description="Daily routine preferences")
     hotel_location: Optional[str] = Field(default=None, max_length=500, description="Hotel location or address")
+    additional_preferences: Optional[dict] = Field(default=None, description="Additional preferences")
 
     class Config:
         json_schema_extra = {
@@ -62,28 +63,13 @@ class TripCreateRequest(BaseModel):
                     "lunch_window": ["12:00:00", "14:00:00"],
                     "dinner_window": ["19:00:00", "22:00:00"]
                 },
-                "hotel_location": "Marais district, Paris"
-            }
-        }
-
-
-    additional_preferences: Optional[dict] = Field(default=None, description="Additional preferences")
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "pace": "fast",
-                "interests": ["food", "culture", "nightlife", "techno parties"],
+                "hotel_location": "Marais district, Paris",
                 "additional_preferences": {
-                    "note": "We hate museums",
-                    "music_preference": "techno"
+                    "note": "We love museums",
+                    "music_preference": "jazz"
                 }
             }
         }
-
-
-class TripUpdateRequest(BaseModel):
-    """Request schema for updating an existing trip (partial updates)."""
 
 
 class TripUpdateRequest(BaseModel):

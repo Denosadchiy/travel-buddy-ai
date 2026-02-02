@@ -184,6 +184,12 @@ final class RouteBuildingViewModel: ObservableObject {
     }
 
     func retry() {
+        // Cancel any existing task
+        apiTask?.cancel()
+        animationTimer?.invalidate()
+        subtitleTimer?.invalidate()
+
+        // Reset state
         state = .idle
         visiblePOIs = []
         routeCoordinates = []

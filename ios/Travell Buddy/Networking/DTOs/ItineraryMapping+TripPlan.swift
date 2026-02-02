@@ -132,6 +132,14 @@ extension TripItineraryDayDTO {
         // Convert blocks to activities (filter out blocks without POI or rest blocks)
         let activities = blocks.compactMap { $0.toTripActivity() }
 
+        let droppedCount = blocks.count - activities.count
+        if droppedCount > 0 {
+            print("⚠️ Day \(dayNumber): \(droppedCount)/\(blocks.count) blocks dropped (no POI)")
+        }
+        if activities.isEmpty && !blocks.isEmpty {
+            print("❌ Day \(dayNumber): ALL \(blocks.count) blocks had nil POI — day will be empty")
+        }
+
         return TripDay(
             index: dayNumber,
             date: date,

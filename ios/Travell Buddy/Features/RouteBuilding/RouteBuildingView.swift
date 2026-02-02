@@ -150,8 +150,9 @@ struct RouteBuildingView: View {
             case .paywallRequired:
                 onPaywallRequired()
             case .failed:
-                print("❌ Route generation failed, calling onRetry")
-                onRetry()
+                // Show error view and let user decide to retry or close
+                // Don't automatically dismiss - let user see the error and choose
+                print("❌ Route generation failed, showing error view")
             default:
                 break
             }
@@ -162,21 +163,40 @@ struct RouteBuildingView: View {
 
     private var errorView: some View {
         VStack(spacing: 20) {
-            Text("Не удалось построить маршрут.\nПопробовать снова?")
+            Text("Не удалось построить маршрут")
                 .font(.system(size: 18, weight: .medium))
                 .foregroundColor(.white)
                 .shadow(color: .black.opacity(0.5), radius: 4, x: 0, y: 2)
                 .multilineTextAlignment(.center)
 
-            Button(action: {
-                onRetry()
-            }) {
-                Text("Повторить")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(.black)
-                    .frame(width: 160, height: 48)
-                    .background(Color.white)
-                    .cornerRadius(24)
+            HStack(spacing: 16) {
+                // Close button
+                Button(action: {
+                    onRetry()  // Dismisses view and shows error alert
+                }) {
+                    Text("Закрыть")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(width: 120, height: 48)
+                        .background(Color.white.opacity(0.2))
+                        .cornerRadius(24)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 24)
+                                .stroke(Color.white.opacity(0.4), lineWidth: 1)
+                        )
+                }
+
+                // Retry button
+                Button(action: {
+                    viewModel.retry()  // Retry within the same view
+                }) {
+                    Text("Повторить")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(.black)
+                        .frame(width: 140, height: 48)
+                        .background(Color.white)
+                        .cornerRadius(24)
+                }
             }
         }
     }

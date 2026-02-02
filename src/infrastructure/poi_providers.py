@@ -803,6 +803,8 @@ class GooglePlacesPOIProvider(POIProvider):
         city: str,
         desired_categories: list[str],
         fetch_details: bool = True,
+        city_center_lat: Optional[float] = None,
+        city_center_lon: Optional[float] = None,
     ) -> Optional[POIModel]:
         """
         Cache a Google Place result to the database.
@@ -815,7 +817,23 @@ class GooglePlacesPOIProvider(POIProvider):
         from src.infrastructure.google_place_details import fetch_place_details
 
         # CRITICAL: Validate that place is actually in the requested city (2026-01-19 fix)
-        if not self._validate_city_match(place, city):
+        # Use coordinate-based validation as primary when city center is known.
+        # This handles multilingual city names (e.g. "Сен-Тропе" vs "Saint-Tropez").
+        city_validated = False
+        if city_center_lat is not None and city_center_lon is not None:
+            distance_km = haversine_distance_km(
+                city_center_lat, city_center_lon, place.lat, place.lon
+            )
+            if distance_km <= 50.0:
+                city_validated = True
+            else:
+                logger.warning(
+                    f"Skipping place {place.name} - {distance_km:.1f}km from city center "
+                    f"(max 50km)"
+                )
+                return None
+
+        if not city_validated and not self._validate_city_match(place, city):
             logger.warning(f"Skipping place {place.name} - not in city {city}")
             return None
 
@@ -1000,6 +1018,8 @@ class GooglePlacesPOIProvider(POIProvider):
                 city,
                 desired_categories,
                 fetch_details=fetch_details,
+                city_center_lat=city_center_lat,
+                city_center_lon=city_center_lon,
             )
 
             # Skip if city validation failed (2026-01-19 fix)

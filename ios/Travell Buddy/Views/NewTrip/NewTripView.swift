@@ -211,7 +211,7 @@ struct NewTripView: View {
                 onRouteReady: { itinerary in
                     Task { @MainActor in
                         // Создаём TripPlan из itinerary
-                        tripPlanViewModel.plan = itinerary.toTripPlan(
+                        let plan = itinerary.toTripPlan(
                             destinationCity: data.cityName,
                             budget: selectedBudget,
                             interests: Array(selectedInterests).sorted(),
@@ -219,6 +219,18 @@ struct NewTripView: View {
                             expectedStartDate: startDate,
                             expectedEndDate: endDate
                         )
+
+                        // Safety check: if all days have empty activities, treat as error
+                        let totalActivities = plan.days.reduce(0) { $0 + $1.activities.count }
+                        if totalActivities == 0 {
+                            print("❌ Plan has 0 activities across \(plan.days.count) days — treating as error")
+                            routeBuildingData = nil
+                            planGenerationError = "Не удалось найти места для маршрута. Попробуйте ещё раз."
+                            showErrorAlert = true
+                            return
+                        }
+
+                        tripPlanViewModel.plan = plan
 
                         // Показываем экран плана после закрытия cover
                         pendingTripPlanPresentation = true
