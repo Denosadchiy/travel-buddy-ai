@@ -1,0 +1,38 @@
+<svg width="920" height="420" viewBox="0 0 920 420" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="fullPinBase" x1="275" y1="42" x2="441" y2="276" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F2A245"/>
+      <stop offset="0.42" stop-color="#CD6921"/>
+      <stop offset="1" stop-color="#7E390D"/>
+    </linearGradient>
+    <linearGradient id="fullPinAccent" x1="296" y1="83" x2="393" y2="248" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F4A64A"/>
+      <stop offset="1" stop-color="#E78E34"/>
+    </linearGradient>
+    <linearGradient id="fullPlane" x1="222" y1="185" x2="351" y2="185" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F48822"/>
+      <stop offset="1" stop-color="#F07A14"/>
+    </linearGradient>
+  </defs>
+  <path
+    fill-rule="evenodd"
+    clip-rule="evenodd"
+    d="M360 38C417.5 38 458 78.8 458 135.8C458 170.9 440.8 201.9 416.5 232.8C397.4 257 375.4 280.1 360 320C344.6 280.1 322.6 257 303.5 232.8C279.2 201.9 262 170.9 262 135.8C262 78.8 302.5 38 360 38ZM360 76.6C327.4 76.6 304 100 304 132C304 164.3 329.4 190.6 360 190.6C390.6 190.6 416 164.3 416 132C416 100 392.6 76.6 360 76.6Z"
+    fill="url(#fullPinBase)"
+  />
+  <path
+    d="M284.9 109.9C284.8 76.7 314.7 52.6 343.6 52.6C324 59.8 307.2 79.4 307.2 104.9C307.2 123.5 315.9 139 328.2 151L385.1 206.5L360 271.6C345.5 241.6 327.4 220.9 310.2 198.9C289.9 172.8 285.1 139.3 284.9 109.9Z"
+    fill="url(#fullPinAccent)"
+  />
+  <path
+    d="M398.2 51.3C427.6 62.7 447.5 92.7 447.5 126.7C447.5 166.3 427.2 199.8 398.9 234.2C384.9 251.3 370.8 268 360 289.3L336.7 267.2L398.2 51.3Z"
+    fill="#6C2D0A"
+    fill-opacity="0.6"
+  />
+  <path
+    d="M242.4 146C240.7 146.2 239.1 146.8 237.8 148.1C234.9 151 235.1 155.6 238.4 158.1L278.9 187.4L231.8 190.1C227.5 190.4 224.1 193.9 224.1 198.1C224.1 202.3 227.6 205.8 232 206L280.7 207.4L305.6 226.7C309 229.4 314.1 229 316.9 225.7C318.2 224.2 318.7 222.3 318.7 220.4L318.1 194.5L352.5 188.1C355.4 187.6 357.6 185.2 357.9 182.4C358.2 179.6 356.7 176.8 354.1 175.7L328 164.4L337.4 151C339.2 148.5 339.2 145 337.2 142.5C335.2 140 331.8 139 328.7 140.2L304.8 149.4L294.2 138.8C291.1 135.8 286.4 135.5 283 138C280.6 139.9 279.3 142.9 279.7 145.9L280.8 155.6L242.4 146Z"
+    fill="url(#fullPlane)"
+  />
+  <text x="460" y="376" text-anchor="middle" fill="#9A4B14" font-size="90" font-weight="800" font-family="Montserrat, Avenir Next, Poppins, Arial, sans-serif" letter-spacing="6">LOCALLY</text>
+  <text x="460" y="410" text-anchor="middle" fill="#F1841C" font-size="42" font-weight="500" font-family="Montserrat, Avenir Next, Poppins, Arial, sans-serif" letter-spacing="4">AI-POWERED TRAVEL MATE</text>
+</svg>
