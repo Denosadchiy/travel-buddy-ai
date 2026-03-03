@@ -7,9 +7,6 @@ from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 import secrets
 import hashlib
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 
 from src.auth.config import auth_settings
 
@@ -216,6 +213,9 @@ class EmailOTPProvider:
     Email OTP (One-Time Password) provider for passwordless email authentication.
     """
 
+    def __init__(self):
+        self._smtp_circuit_open_until: Optional[datetime] = None
+
     def generate_otp(self, length: int = 6) -> str:
         """Generate a random OTP code."""
         return ''.join(secrets.choice('0123456789') for _ in range(length))
@@ -230,7 +230,7 @@ class EmailOTPProvider:
 
     async def send_otp_email(self, email: str, code: str) -> bool:
         """
-        Send an OTP email to the user.
+        Send an OTP email to the user via Resend HTTP API.
 
         Args:
             email: Recipient email address
@@ -240,70 +240,45 @@ class EmailOTPProvider:
             True if email was sent successfully (or logged in dev mode)
         """
         if auth_settings.otp_dev_mode:
-            # Development mode: just log the code
             print(f"[DEV MODE] OTP for {email}: {code}")
             return True
 
-        if not auth_settings.smtp_host or not auth_settings.smtp_user:
-            raise ProviderError("SMTP not configured")
+        if not auth_settings.resend_api_key:
+            raise ProviderError("Resend API key not configured")
+
+        if (
+            self._smtp_circuit_open_until
+            and datetime.utcnow() < self._smtp_circuit_open_until
+        ):
+            raise ProviderError("Email service temporarily unavailable")
+
+        html = f"""\
+<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 400px; margin: 0 auto; padding: 40px 20px;">
+  <h2>Your login code</h2>
+  <div style="font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #FF7043; text-align: center; padding: 20px; background: #FFF3E0; border-radius: 12px; margin: 20px 0;">{code}</div>
+  <p>Enter this code in the app to continue.</p>
+  <p style="font-size: 14px; color: #666; margin-top: 30px;">This code expires in {auth_settings.otp_expire_minutes} minutes.<br>
+  If you didn't request this code, please ignore this email.</p>
+</div>"""
 
         try:
-            # Create message
-            msg = MIMEMultipart("alternative")
-            msg["Subject"] = f"Your Travel Buddy login code: {code}"
-            msg["From"] = f"{auth_settings.smtp_from_name} <{auth_settings.smtp_from_email}>"
-            msg["To"] = email
-
-            # Plain text version
-            text = f"""
-Your Travel Buddy login code is: {code}
-
-This code expires in {auth_settings.otp_expire_minutes} minutes.
-
-If you didn't request this code, please ignore this email.
-            """
-
-            # HTML version
-            html = f"""
-<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }}
-        .container {{ max-width: 400px; margin: 0 auto; padding: 40px 20px; }}
-        .code {{ font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #FF7043; text-align: center; padding: 20px; background: #FFF3E0; border-radius: 12px; margin: 20px 0; }}
-        .footer {{ font-size: 14px; color: #666; margin-top: 30px; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h2>Your login code</h2>
-        <div class="code">{code}</div>
-        <p>Enter this code in the app to continue.</p>
-        <p class="footer">This code expires in {auth_settings.otp_expire_minutes} minutes.<br>
-        If you didn't request this code, please ignore this email.</p>
-    </div>
-</body>
-</html>
-            """
-
-            msg.attach(MIMEText(text, "plain"))
-            msg.attach(MIMEText(html, "html"))
-
-            # Send email (SSL or STARTTLS depending on config)
-            if auth_settings.smtp_use_ssl:
-                with smtplib.SMTP_SSL(auth_settings.smtp_host, auth_settings.smtp_port) as server:
-                    server.login(auth_settings.smtp_user, auth_settings.smtp_password)
-                    server.sendmail(auth_settings.smtp_from_email, email, msg.as_string())
-            else:
-                with smtplib.SMTP(auth_settings.smtp_host, auth_settings.smtp_port) as server:
-                    server.starttls()
-                    server.login(auth_settings.smtp_user, auth_settings.smtp_password)
-                    server.sendmail(auth_settings.smtp_from_email, email, msg.as_string())
-
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    "https://api.resend.com/emails",
+                    headers={"Authorization": f"Bearer {auth_settings.resend_api_key}"},
+                    json={
+                        "from": auth_settings.email_from,
+                        "to": [email],
+                        "subject": f"Your Locally login code: {code}",
+                        "html": html,
+                    },
+                    timeout=10,
+                )
+                resp.raise_for_status()
+            self._smtp_circuit_open_until = None
             return True
-
         except Exception as e:
+            self._smtp_circuit_open_until = datetime.utcnow() + timedelta(minutes=5)
             print(f"Failed to send OTP email: {e}")
             raise ProviderError(f"Failed to send email: {str(e)}")
 

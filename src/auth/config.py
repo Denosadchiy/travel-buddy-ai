@@ -55,34 +55,14 @@ class AuthSettings(BaseSettings):
         description="Google OAuth client ID for web (if different)"
     )
 
-    # Email OTP Configuration
-    smtp_host: Optional[str] = Field(
+    # Email Configuration (Resend HTTP API)
+    resend_api_key: Optional[str] = Field(
         default=None,
-        description="SMTP server host for sending OTP emails"
+        description="Resend API key for sending emails"
     )
-    smtp_port: int = Field(
-        default=587,
-        description="SMTP server port"
-    )
-    smtp_user: Optional[str] = Field(
-        default=None,
-        description="SMTP authentication username"
-    )
-    smtp_password: Optional[str] = Field(
-        default=None,
-        description="SMTP authentication password"
-    )
-    smtp_from_email: str = Field(
-        default="noreply@travelbuddy.com",
-        description="From email address for OTP emails"
-    )
-    smtp_from_name: str = Field(
-        default="Travel Buddy",
-        description="From name for OTP emails"
-    )
-    smtp_use_ssl: bool = Field(
-        default=False,
-        description="Use SMTP SSL (e.g. port 465). If false, STARTTLS is used."
+    email_from: str = Field(
+        default="Locally <onboarding@resend.dev>",
+        description="From address for emails (e.g. 'Locally <onboarding@resend.dev>')"
     )
     otp_expire_minutes: int = Field(
         default=10,
