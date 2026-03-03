@@ -21,6 +21,7 @@ from src.api.auth import router as auth_router
 from src.api.day_studio import router as day_studio_router, places_router
 from src.api.saved_trips import router as saved_trips_router
 from src.api.place_replacement import router as place_replacement_router
+from src.api.contact import router as contact_router
 
 
 @asynccontextmanager
@@ -78,6 +79,7 @@ app.include_router(day_studio_router, prefix="/api")
 app.include_router(places_router, prefix="/api")
 app.include_router(saved_trips_router, prefix="/api")
 app.include_router(place_replacement_router, prefix="/api")
+app.include_router(contact_router, prefix="/api")
 
 
 @app.get("/")

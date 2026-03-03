@@ -1,15 +1,43 @@
 import { useState } from 'react'
 import { Send } from 'lucide-react'
 
-export default function ContactSection() {
-  const [submitted, setSubmitted] = useState(false)
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
-  const handleSubmit = (e: React.FormEvent) => {
+export default function ContactSection() {
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [message, setMessage] = useState('')
+  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    // Frontend-only: just show success
-    setSubmitted(true)
-    setTimeout(() => setSubmitted(false), 3000)
+    if (!name.trim() || !email.trim() || !message.trim()) return
+
+    setStatus('sending')
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/contact`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, message }),
+      })
+      if (!res.ok) throw new Error()
+      setStatus('sent')
+      setName('')
+      setEmail('')
+      setMessage('')
+      setTimeout(() => setStatus('idle'), 4000)
+    } catch {
+      setStatus('error')
+      setTimeout(() => setStatus('idle'), 4000)
+    }
   }
+
+  const buttonLabel = {
+    idle: 'Send Message',
+    sending: 'Sending...',
+    sent: 'Message Sent!',
+    error: 'Failed to send. Try again.',
+  }[status]
 
   return (
     <section id="contact" className="py-24">
@@ -28,6 +56,9 @@ export default function ContactSection() {
                 <label className="block text-sm text-text-secondary mb-2">Full Name</label>
                 <input
                   type="text"
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
                   placeholder="Jane Doe"
                   className="w-full bg-white/5 border border-border-default rounded-xl px-4 py-3 text-white placeholder-text-muted focus:outline-none focus:border-primary transition-colors"
                 />
@@ -36,6 +67,9 @@ export default function ContactSection() {
                 <label className="block text-sm text-text-secondary mb-2">Email Address</label>
                 <input
                   type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   placeholder="jane@example.com"
                   className="w-full bg-white/5 border border-border-default rounded-xl px-4 py-3 text-white placeholder-text-muted focus:outline-none focus:border-primary transition-colors"
                 />
@@ -46,6 +80,9 @@ export default function ContactSection() {
               <label className="block text-sm text-text-secondary mb-2">Message</label>
               <textarea
                 rows={4}
+                required
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
                 placeholder="How can we help you?"
                 className="w-full bg-white/5 border border-border-default rounded-xl px-4 py-3 text-white placeholder-text-muted focus:outline-none focus:border-primary transition-colors resize-none"
               />
@@ -53,10 +90,11 @@ export default function ContactSection() {
 
             <button
               type="submit"
-              className="w-full bg-primary hover:bg-primary-hover text-white font-semibold py-3.5 rounded-xl transition-colors flex items-center justify-center gap-2"
+              disabled={status === 'sending'}
+              className="w-full bg-primary hover:bg-primary-hover disabled:opacity-50 text-white font-semibold py-3.5 rounded-xl transition-colors flex items-center justify-center gap-2"
             >
               <Send className="w-4 h-4" />
-              {submitted ? 'Message Sent!' : 'Send Message'}
+              {buttonLabel}
             </button>
           </form>
         </div>

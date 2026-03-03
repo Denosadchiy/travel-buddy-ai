@@ -94,7 +94,7 @@ export default function TermsPage() {
                 <li><strong className="text-white">BUDOVSKY ONLINE - FZCO</strong></li>
                 <li>Dubai Silicon Oasis, Dubai, United Arab Emirates</li>
                 <li>Phone: <a href="tel:+971521173919" className="text-primary hover:underline">+971 52 117 3919</a></li>
-                <li>Email: <a href="mailto:konkin.g@yandex.ru" className="text-primary hover:underline">konkin.g@yandex.ru</a></li>
+                <li>Email: <a href="mailto:locally.office@gmail.com" className="text-primary hover:underline">locally.office@gmail.com</a></li>
               </ul>
             </section>
           </div>

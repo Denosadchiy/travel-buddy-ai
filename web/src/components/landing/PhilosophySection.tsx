@@ -1,6 +1,6 @@
 export default function PhilosophySection() {
   return (
-    <section id="about" className="py-24">
+    <section id="philosophy" className="py-24">
       <div className="max-w-3xl mx-auto px-6 text-center">
         <span className="text-primary text-xs font-semibold uppercase tracking-widest">
           Our Philosophy

@@ -9,6 +9,7 @@ import ItineraryPage from './pages/ItineraryPage'
 import MyTripsPage from './pages/MyTripsPage'
 import PrivacyPage from './pages/PrivacyPage'
 import TermsPage from './pages/TermsPage'
+import AboutPage from './pages/AboutPage'
 
 export default function App() {
   const restoreSession = useAuthStore((s) => s.restoreSession)
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="/trips" element={<MyTripsPage />} />
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/terms" element={<TermsPage />} />
+        <Route path="/about" element={<AboutPage />} />
       </Routes>
       <LoginModal />
     </>
