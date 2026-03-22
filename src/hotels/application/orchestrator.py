@@ -1,0 +1,768 @@
+"""
+HotelSearchOrchestrator — main pipeline controller.
+
+7-phase pipeline (≤62s deadline):
+  Phase 1 (0–5s):   IntentParser + searchDestination — parallel
+  Phase 2a (5–8s):  Multi-sort adaptive fetch — adaptive × searchHotels
+  Phase 2b (8–9s):  Dedup + L1 deterministic filter → 25 finalists
+  Phase 3 (9–31s):  Deep fetch: 25 hotels × 5 calls = 125 requests
+  Phase 4 (after 3): Batch review analysis — 5 LLM batches × 5 hotels
+  Phase 5 (after 4): MasterRanker LLM-driven (formula fallback)
+  Phase 6 (after 5): Photo vision for final top-5 (optional, if time remains)
+  Phase 7:          Format + return HotelSearchResponse
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from typing import Callable
+from urllib.parse import urlencode
+
+from src.hotels.application.candidate_selector import CandidateSelector
+from src.hotels.application.data_fetcher import HotelDataFetcher
+from src.hotels.application.intent_parser import IntentParser
+from src.hotels.application.photo_analyzer import PhotoAnalyzer
+from src.hotels.application.ranker import MasterRanker
+from src.hotels.application.review_analyzer import ReviewAnalyzer
+from src.hotels.application.session_store import SearchSessionStore
+from src.hotels.domain.schemas import (
+    DestinationResult,
+    HotelExplainRequest,
+    HotelExplanationResponse,
+    HotelFindRequest,
+    HotelProfile,
+    HotelResult,
+    HotelSearchRequest,
+    HotelSearchResponse,
+    MasterRankingResult,
+    ParsedIntent,
+    PhotoAnalysis,
+    ReviewAnalysis,
+)
+from src.hotels.infrastructure.booking_client import (
+    BookingClient,
+    DestinationNotFoundError,
+)
+
+logger = logging.getLogger(__name__)
+
+_DEADLINE = 62.0           # hard deadline seconds
+_VISION_MIN_REMAINING = 10.0   # skip vision if less time left
+
+# Progress messages for SSE streaming
+_PHASE_MESSAGES: dict[str, dict[int, str]] = {
+    "en": {
+        1: "Analyzing your preferences…",
+        2: "Searching hotels…",
+        3: "Collecting hotel details…",
+        4: "Analyzing guest reviews…",
+        5: "Finding your best matches…",
+        6: "Analyzing hotel photos…",
+    },
+    "ru": {
+        1: "Анализируем ваши предпочтения…",
+        2: "Ищем отели…",
+        3: "Собираем данные об отелях…",
+        4: "Анализируем отзывы гостей…",
+        5: "Подбираем лучшие варианты для вас…",
+        6: "Анализируем фотографии…",
+    },
+}
+
+_PHASE_PROGRESS = {1: 0.05, 2: 0.15, 3: 0.35, 4: 0.55, 5: 0.75, 6: 0.90}
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _detect_language(user_wishes: str | None) -> str:
+    """Return 'ru' if user_wishes contains Cyrillic characters, else 'en'."""
+    if user_wishes and any("\u0400" <= c <= "\u04FF" for c in user_wishes):
+        return "ru"
+    return "en"
+
+
+def _score_word(score: float) -> str:
+    if score >= 9.0:
+        return "Exceptional"
+    if score >= 8.0:
+        return "Superb"
+    if score >= 7.5:
+        return "Very Good"
+    if score >= 7.0:
+        return "Good"
+    if score > 0:
+        return "Pleasant"
+    return ""
+
+
+def _build_booking_url(
+    base_url: str,
+    hotel_id: int,
+    check_in: str,
+    check_out: str,
+    adults: int,
+    children_ages: list[int],
+    currency: str,
+) -> str:
+    """
+    Build a Booking.com deep link with pre-filled booking parameters.
+
+    Uses the hotel page URL from the API (e.g. https://www.booking.com/hotel/fr/name.html)
+    and appends checkin, checkout, group_adults, group_children, age, currency params.
+    Falls back to searchresults.html with hotel_id if base_url is empty.
+    """
+    if base_url and "booking.com/hotel/" in base_url:
+        # Strip any existing query string
+        base = base_url.split("?")[0]
+    elif base_url and "booking.com" in base_url:
+        base = base_url.split("?")[0]
+    else:
+        base = "https://www.booking.com/searchresults.html"
+
+    params: list[tuple[str, str]] = [
+        ("checkin", check_in),
+        ("checkout", check_out),
+        ("group_adults", str(adults)),
+        ("group_children", str(len(children_ages))),
+        ("selected_currency", currency),
+    ]
+    for age in children_ages:
+        params.append(("age", str(age)))
+
+    # If we used the fallback URL, include hotel_id so the search lands on the right property
+    if "searchresults.html" in base:
+        params.append(("hotel_id", str(hotel_id)))
+
+    return f"{base}?{urlencode(params)}"
+
+
+def _assemble_hotel_result(
+    ranked_item,
+    profile: HotelProfile,
+    photo: PhotoAnalysis | None = None,
+    check_in: str = "",
+    check_out: str = "",
+    adults: int = 2,
+    children_ages: list[int] | None = None,
+    currency: str = "EUR",
+) -> HotelResult:
+    raw = profile.raw
+    ra = profile.review_analysis
+
+    key_facilities = [
+        f.title for f in raw.facilities[:20]
+        if f.charge_mode in ("FREE", "UNKNOWN_CHARGE_MODE")
+    ][:10]
+
+    pets_allowed = any(f.id == 4 for f in raw.facilities)
+
+    if ra.segment_highlights:
+        review_summary = " ".join(ra.segment_highlights[:2])
+    elif ra.top_pros:
+        review_summary = f"Guests love: {', '.join(ra.top_pros[:2])}"
+    else:
+        review_summary = ""
+
+    booking_url = _build_booking_url(
+        base_url=raw.url or "",
+        hotel_id=raw.hotel_id,
+        check_in=check_in,
+        check_out=check_out,
+        adults=adults,
+        children_ages=children_ages or [],
+        currency=currency,
+    )
+
+    return HotelResult(
+        hotel_id=raw.hotel_id,
+        name=raw.name or f"Hotel {raw.hotel_id}",
+        accommodation_type=raw.accommodation_type or "Hotel",
+        stars=raw.stars,
+        is_boutique=raw.chaincode is None and raw.stars in (0, 3, 4),
+        url=raw.url or "",
+        booking_url=booking_url,
+        review_score=raw.review_score,
+        review_score_word=_score_word(raw.review_score),
+        review_count=raw.review_count,
+        category_scores={
+            k: v for k, v in {
+                "cleanliness": raw.review_scores.cleanliness,
+                "comfort": raw.review_scores.comfort,
+                "location": raw.review_scores.location,
+                "staff": raw.review_scores.staff,
+                "value": raw.review_scores.value,
+                "wifi": raw.review_scores.wifi,
+            }.items() if v is not None
+        },
+        segment_scores=raw.review_scores.by_segment,
+        price_per_night=raw.price_per_night,
+        total_price=raw.total_price,
+        currency=raw.currency,
+        address=raw.address,
+        district=raw.district,
+        distance_to_center_km=raw.distance_to_cc,
+        latitude=raw.latitude or 0.0,
+        longitude=raw.longitude or 0.0,
+        photos=raw.photo_urls[:5],
+        key_facilities=key_facilities,
+        breakfast_included=raw.breakfast_included,
+        pets_allowed=pets_allowed,
+        free_cancellation=raw.free_cancellation,
+        checkin_from=raw.checkin_from,
+        checkout_until=raw.checkout_until,
+        ai_score=ranked_item.ai_score,
+        ai_match_reason=ranked_item.ai_match_reason,
+        ai_pros=ra.top_pros,
+        ai_cons=ra.top_cons,
+        ai_hidden_issues=ra.hidden_issues,
+        review_summary=review_summary,
+        interior_style=photo.interior_style if photo else None,
+        view_quality=photo.view_quality if photo else None,
+        visual_cleanliness=photo.cleanliness_visual if photo else None,
+    )
+
+
+def _filters_summary(intent: ParsedIntent, dest: DestinationResult) -> str:
+    parts: list[str] = []
+    if intent.price_max:
+        parts.append(f"Budget ≤{intent.price_max:.0f}/night")
+    if intent.min_review_score > 0:
+        parts.append(f"Score ≥{intent.min_review_score:.0f}")
+    if intent.api_filters:
+        parts.append(f"{len(intent.api_filters)} amenity filters")
+    parts.append(f"{dest.name} ({dest.nr_hotels} hotels available)")
+    return " · ".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator
+# ---------------------------------------------------------------------------
+
+class HotelSearchOrchestrator:
+    """
+    Main pipeline controller for AI hotel search.
+    Single instance shared across all requests (stateful via session store).
+    """
+
+    def __init__(self) -> None:
+        self._intent_parser = IntentParser()
+        self._selector = CandidateSelector()
+        self._fetcher = HotelDataFetcher()
+        self._analyzer = ReviewAnalyzer()
+        self._ranker = MasterRanker()
+        self._photo = PhotoAnalyzer()
+        self._sessions = SearchSessionStore()
+
+    # ──────────────────────────────────────────────────────────────────
+    # search() — main 7-phase pipeline
+    # ──────────────────────────────────────────────────────────────────
+
+    async def search(
+        self,
+        request: HotelSearchRequest,
+        progress_callback: Callable | None = None,
+    ) -> HotelSearchResponse:
+        """Full 7-phase hotel search pipeline (≤62s deadline)."""
+        t0 = time.monotonic()
+        timings: dict[str, float] = {}
+        lang = _detect_language(request.user_wishes)
+
+        def elapsed() -> float:
+            return time.monotonic() - t0
+
+        def remaining() -> float:
+            return _DEADLINE - elapsed()
+
+        async def _report(phase: int, city_name: str = "") -> None:
+            if not progress_callback:
+                return
+            msg = _PHASE_MESSAGES[lang].get(phase, "")
+            if phase == 2 and city_name:
+                if lang == "ru":
+                    msg = f"Ищем отели в {city_name}…"
+                else:
+                    msg = f"Searching hotels in {city_name}…"
+            pct = _PHASE_PROGRESS.get(phase, 0.5)
+            await progress_callback(phase, msg, pct)
+
+        children_age_str = (
+            ",".join(str(a) for a in request.children_ages)
+            if request.children_ages else None
+        )
+
+        # ── Phase 1: Intent + Destination (parallel) ─────────────────
+        await _report(1)
+        p1 = elapsed()
+        intent, dest = await asyncio.gather(
+            self._intent_parser.parse(request),
+            self._resolve_destination(request.city),
+        )
+        timings["phase1"] = elapsed() - p1
+        logger.info(
+            "Phase 1: %.1fs | segment=%s filters=%d weights_sum=%.2f",
+            timings["phase1"], intent.user_segment, len(intent.api_filters),
+            sum(intent.scoring_weights.model_dump().values()),
+        )
+
+        # ── Phases 2–3: shared BookingClient ─────────────────────────
+        await _report(2, city_name=dest.name)
+        async with BookingClient() as booking_client:
+
+            # Phase 2a: wide funnel
+            p2a = elapsed()
+            raw_hotels = await self._selector.fetch_wide_funnel(
+                dest_result=dest,
+                intent=intent,
+                booking_client=booking_client,
+                arrival_date=request.check_in,
+                departure_date=request.check_out,
+                adults=request.adults,
+                currency=request.currency,
+                children_age=children_age_str,
+            )
+            timings["phase2a"] = elapsed() - p2a
+
+            if not raw_hotels:
+                logger.warning("Phase 2a: 0 candidates — empty response")
+                return self._empty_response(request)
+
+            # Phase 2b: L1 filter
+            relaxed = (dest.nr_hotels or 0) <= 25
+            finalists = self._selector.apply_l1_filter(raw_hotels, intent, relaxed=relaxed)
+            timings["phase2"] = elapsed() - p2a
+            logger.info(
+                "Phase 2: %.1fs | wide=%d → finalists=%d (relaxed=%s)",
+                timings["phase2"], len(raw_hotels), len(finalists), relaxed,
+            )
+
+            if not finalists:
+                logger.warning("Phase 2b: all candidates filtered — empty response")
+                return self._empty_response(request)
+
+            # Phase 3: deep data fetch
+            await _report(3)
+            p3 = elapsed()
+            hotel_ids = [h["hotel_id"] for h in finalists]
+            raw_data = await self._fetcher.fetch_all(
+                hotel_ids=hotel_ids,
+                booking_client=booking_client,
+                arrival=request.check_in,
+                departure=request.check_out,
+                adults=request.adults,
+                currency=request.currency,
+                children_age=children_age_str,
+            )
+            timings["phase3"] = elapsed() - p3
+            logger.info("Phase 3: %.1fs | %d/%d fetched", timings["phase3"], len(raw_data), len(hotel_ids))
+
+        # ── Phase 4: review analysis ──────────────────────────────────
+        await _report(4)
+        p4 = elapsed()
+        review_map = await self._analyzer.analyze_batch(raw_data, user_segment=intent.user_segment)
+        timings["phase4"] = elapsed() - p4
+        logger.info("Phase 4: %.1fs | %d analyzed", timings["phase4"], len(review_map))
+
+        profiles = [
+            HotelProfile(
+                raw=rd,
+                review_analysis=review_map.get(rd.hotel_id, ReviewAnalysis(hotel_id=rd.hotel_id)),
+            )
+            for rd in raw_data
+        ]
+
+        # ── Phase 5: master ranking ───────────────────────────────────
+        await _report(5)
+        p5 = elapsed()
+        ranking = await self._ranker.rank(profiles, intent)
+        timings["phase5"] = elapsed() - p5
+        logger.info("Phase 5: %.1fs | top %d ranked", timings["phase5"], len(ranking.ranked_top10))
+
+        # ── Phase 6: photo vision (conditional) ──────────────────────
+        photo_results: dict[int, PhotoAnalysis] = {}
+        if remaining() >= _VISION_MIN_REMAINING:
+            await _report(6)
+            p6 = elapsed()
+            top5_ids = [r.hotel_id for r in ranking.ranked_top10[:5]]
+            async with BookingClient() as bc6:
+                photo_results = await self._photo.analyze_top_hotels(top5_ids, bc6, intent)
+            timings["phase6"] = elapsed() - p6
+            logger.info("Phase 6: %.1fs | %d photos", timings["phase6"], len(photo_results))
+        else:
+            logger.info("Phase 6: skipped (%.1fs remaining)", remaining())
+
+        # ── Phase 7: assemble response ────────────────────────────────
+        profile_map = {p.hotel_id: p for p in profiles}
+        hotels_out: list[HotelResult] = []
+        for ranked_item in ranking.ranked_top10:
+            profile = profile_map.get(ranked_item.hotel_id)
+            if not profile:
+                continue
+            hotels_out.append(
+                _assemble_hotel_result(
+                    ranked_item,
+                    profile,
+                    photo_results.get(ranked_item.hotel_id),
+                    check_in=request.check_in,
+                    check_out=request.check_out,
+                    adults=request.adults,
+                    children_ages=request.children_ages,
+                    currency=request.currency,
+                )
+            )
+
+        # Save session for pagination / explain
+        fetch_params = {
+            "check_in": request.check_in,
+            "check_out": request.check_out,
+            "adults": request.adults,
+            "currency": request.currency,
+            "children_age": children_age_str,
+            "children_ages": request.children_ages,
+            "dest_id": dest.dest_id,
+            "search_type": dest.search_type,
+        }
+        session_id = self._sessions.create_session(
+            intent=intent,
+            all_candidates=raw_hotels,
+            fetch_params=fetch_params,
+        )
+        self._sessions.update_session(
+            session_id,
+            analyzed_hotels=[rd.hotel_id for rd in raw_data],
+            ranked_results=ranking,
+            offset=len(finalists),
+        )
+
+        total = elapsed()
+        timing_str = " | ".join(f"Ph{k[-1]}: {v:.1f}s" for k, v in timings.items())
+        logger.info(
+            "[HOTEL_SEARCH] city=%s adults=%d phases=%d total_time=%.1fs "
+            "candidates=%d finalists=%d top10=%d vision=%s",
+            request.city, request.adults, len(timings), total,
+            len(raw_hotels), len(finalists), len(hotels_out),
+            "done" if photo_results else "skipped",
+        )
+        logger.info("%s | Total: %.1fs", timing_str, total)
+
+        return HotelSearchResponse(
+            hotels=hotels_out,
+            notable_excluded=ranking.notable_excluded,
+            city=request.city,
+            check_in=request.check_in,
+            check_out=request.check_out,
+            total_found=dest.nr_hotels or len(raw_hotels),
+            session_id=session_id,
+            applied_filters_summary=_filters_summary(intent, dest),
+            has_more=len(raw_hotels) > len(finalists),
+        )
+
+    # ──────────────────────────────────────────────────────────────────
+    # search_more() — pagination
+    # ──────────────────────────────────────────────────────────────────
+
+    async def search_more(self, session_id: str) -> HotelSearchResponse:
+        """Return next batch of hotels from cached session."""
+        session = self._sessions.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session '{session_id}' not found or expired")
+
+        intent: ParsedIntent = session["intent"]
+        all_candidates: list[dict] = session["all_candidates"]
+        analyzed_ids: set[int] = set(session.get("analyzed_hotels", []))
+        fetch_params: dict = session.get("fetch_params", {})
+
+        # Parse children_ages for booking URL
+        children_age_str = fetch_params.get("children_age") or ""
+        children_ages_list = fetch_params.get("children_ages") or [
+            int(a) for a in children_age_str.split(",") if a.strip()
+        ]
+
+        remaining_candidates = [
+            h for h in all_candidates if h["hotel_id"] not in analyzed_ids
+        ]
+
+        if not remaining_candidates:
+            return HotelSearchResponse(
+                hotels=[],
+                city="",
+                check_in=fetch_params.get("check_in", ""),
+                check_out=fetch_params.get("check_out", ""),
+                total_found=len(all_candidates),
+                session_id=session_id,
+                applied_filters_summary="No more hotels available",
+                has_more=False,
+            )
+
+        next_batch = remaining_candidates[:15]
+        next_ids = [h["hotel_id"] for h in next_batch]
+
+        async with BookingClient() as booking_client:
+            raw_data = await self._fetcher.fetch_all(
+                hotel_ids=next_ids,
+                booking_client=booking_client,
+                arrival=fetch_params.get("check_in", ""),
+                departure=fetch_params.get("check_out", ""),
+                adults=fetch_params.get("adults", 2),
+                currency=fetch_params.get("currency", "EUR"),
+                children_age=fetch_params.get("children_age"),
+            )
+
+        review_map = await self._analyzer.analyze_batch(raw_data, user_segment=intent.user_segment)
+        profiles = [
+            HotelProfile(
+                raw=rd,
+                review_analysis=review_map.get(rd.hotel_id, ReviewAnalysis(hotel_id=rd.hotel_id)),
+            )
+            for rd in raw_data
+        ]
+        ranking = await self._ranker.rank(profiles, intent)
+
+        self._sessions.update_session(
+            session_id,
+            analyzed_hotels=list(analyzed_ids) + next_ids,
+        )
+
+        profile_map = {p.hotel_id: p for p in profiles}
+        hotels_out = [
+            _assemble_hotel_result(
+                r,
+                profile_map[r.hotel_id],
+                check_in=fetch_params.get("check_in", ""),
+                check_out=fetch_params.get("check_out", ""),
+                adults=fetch_params.get("adults", 2),
+                children_ages=children_ages_list,
+                currency=fetch_params.get("currency", "EUR"),
+            )
+            for r in ranking.ranked_top10
+            if r.hotel_id in profile_map
+        ]
+
+        return HotelSearchResponse(
+            hotels=hotels_out,
+            notable_excluded=ranking.notable_excluded,
+            city="",
+            check_in=fetch_params.get("check_in", ""),
+            check_out=fetch_params.get("check_out", ""),
+            total_found=len(all_candidates),
+            session_id=session_id,
+            applied_filters_summary="",
+            has_more=len(remaining_candidates) > len(next_batch),
+        )
+
+    # ──────────────────────────────────────────────────────────────────
+    # find_hotel() — direct hotel search by name
+    # ──────────────────────────────────────────────────────────────────
+
+    async def find_hotel(self, request: HotelFindRequest) -> HotelSearchResponse:
+        """Find a specific hotel by name with full AI analysis."""
+        check_in = request.check_in or "2026-06-01"
+        check_out = request.check_out or "2026-06-04"
+        hotel_ids: list[int] = []
+
+        async with BookingClient() as booking_client:
+            # Try direct destination search by hotel name
+            try:
+                dest = await booking_client.search_destination(request.hotel_name)
+                if dest.search_type in ("hotel", "landmark"):
+                    raw_id = dest.dest_id.lstrip("-")
+                    if raw_id.isdigit():
+                        hotel_ids = [int(dest.dest_id)]
+            except Exception:
+                pass
+
+            # Fallback: search by city, fuzzy match by name
+            if not hotel_ids and request.city:
+                try:
+                    city_dest = await booking_client.search_destination(request.city)
+                    hotels_list = await booking_client.search_hotels(
+                        dest_ids=city_dest.dest_id,
+                        search_type=city_dest.search_type,
+                        arrival_date=check_in,
+                        departure_date=check_out,
+                        adults=request.adults,
+                        currency_code=request.currency,
+                        sort_by="bayesian_review_score",
+                        page_number=1,
+                    )
+                    name_lower = request.hotel_name.lower()
+                    for h in hotels_list:
+                        prop = h.get("property", {})
+                        h_name = (prop.get("name") or "").lower()
+                        hid = h.get("hotel_id") or prop.get("id")
+                        if hid and (name_lower in h_name or h_name in name_lower):
+                            hotel_ids = [int(hid)]
+                            break
+                    # Last resort: take first result
+                    if not hotel_ids and hotels_list:
+                        h = hotels_list[0]
+                        prop = h.get("property", {})
+                        hid = h.get("hotel_id") or prop.get("id")
+                        if hid:
+                            hotel_ids = [int(hid)]
+                except Exception as exc:
+                    logger.warning("find_hotel: city search failed: %s", exc)
+
+            if not hotel_ids:
+                return self._empty_response_custom(
+                    city=request.city or "",
+                    check_in=check_in,
+                    check_out=check_out,
+                    note="Hotel not found",
+                )
+
+            raw_data = await self._fetcher.fetch_all(
+                hotel_ids=hotel_ids,
+                booking_client=booking_client,
+                arrival=check_in,
+                departure=check_out,
+                adults=request.adults,
+                currency=request.currency,
+            )
+
+        if not raw_data:
+            return self._empty_response_custom(
+                city=request.city or "",
+                check_in=check_in,
+                check_out=check_out,
+                note="Hotel data unavailable",
+            )
+
+        intent = ParsedIntent()
+        review_map = await self._analyzer.analyze_batch(raw_data, user_segment="couple")
+        profiles = [
+            HotelProfile(
+                raw=rd,
+                review_analysis=review_map.get(rd.hotel_id, ReviewAnalysis(hotel_id=rd.hotel_id)),
+            )
+            for rd in raw_data
+        ]
+        ranking = await self._ranker.rank(profiles, intent)
+        profile_map = {p.hotel_id: p for p in profiles}
+
+        hotels_out = [
+            _assemble_hotel_result(
+                r,
+                profile_map[r.hotel_id],
+                check_in=check_in,
+                check_out=check_out,
+                adults=request.adults,
+                children_ages=[],
+                currency=request.currency,
+            )
+            for r in ranking.ranked_top10
+            if r.hotel_id in profile_map
+        ]
+
+        session_id = self._sessions.create_session(
+            intent=intent,
+            all_candidates=[{"hotel_id": hid} for hid in hotel_ids],
+        )
+
+        return HotelSearchResponse(
+            hotels=hotels_out,
+            city=request.city or "",
+            check_in=check_in,
+            check_out=check_out,
+            total_found=len(hotel_ids),
+            session_id=session_id,
+            applied_filters_summary=f"Direct lookup: {request.hotel_name}",
+            has_more=False,
+        )
+
+    # ──────────────────────────────────────────────────────────────────
+    # explain_hotel() — why not in top-10
+    # ──────────────────────────────────────────────────────────────────
+
+    async def explain_hotel(self, request: HotelExplainRequest) -> HotelExplanationResponse:
+        """Explain why a hotel didn't make the top-10."""
+        session = self._sessions.get_session(request.session_id)
+        if session is None:
+            return HotelExplanationResponse(
+                hotel_name=request.hotel_name,
+                found_in_candidates=False,
+                reason="Session not found or expired. Please start a new search.",
+            )
+
+        all_candidates: list[dict] = session.get("all_candidates", [])
+        ranking: MasterRankingResult | None = session.get("ranked_results")
+
+        # Fuzzy name match
+        name_lower = request.hotel_name.lower()
+        matched_id: int | None = None
+        matched_name: str = request.hotel_name
+
+        for c in all_candidates:
+            c_name = (c.get("name") or "").lower()
+            if c_name and (name_lower in c_name or c_name in name_lower):
+                matched_id = c["hotel_id"]
+                matched_name = c.get("name", request.hotel_name)
+                break
+
+        if matched_id is None:
+            return HotelExplanationResponse(
+                hotel_name=request.hotel_name,
+                found_in_candidates=False,
+                reason=(
+                    "This hotel was not in the candidate pool (~80 hotels). "
+                    "It may have been filtered by price, review score, or availability."
+                ),
+            )
+
+        # Check MasterRanker's filtered_out reasons
+        if ranking and hasattr(ranking, "filtered_out"):
+            reason = ranking.filtered_out.get(str(matched_id))
+            if reason:
+                return HotelExplanationResponse(
+                    hotel_id=matched_id,
+                    hotel_name=matched_name,
+                    found_in_candidates=True,
+                    reason=reason,
+                )
+
+        return HotelExplanationResponse(
+            hotel_id=matched_id,
+            hotel_name=matched_name,
+            found_in_candidates=True,
+            reason=(
+                "The hotel was analyzed but did not score high enough for the top-10. "
+                "It may have lower reviews, a higher price, or fewer matching facilities "
+                "compared to the selected hotels."
+            ),
+        )
+
+    # ──────────────────────────────────────────────────────────────────
+    # Internal helpers
+    # ──────────────────────────────────────────────────────────────────
+
+    async def _resolve_destination(self, city: str) -> DestinationResult:
+        async with BookingClient() as bc:
+            return await bc.search_destination(city)
+
+    def _empty_response(self, request: HotelSearchRequest) -> HotelSearchResponse:
+        return HotelSearchResponse(
+            hotels=[],
+            city=request.city,
+            check_in=request.check_in,
+            check_out=request.check_out,
+            total_found=0,
+            session_id="",
+            applied_filters_summary="No hotels found matching your criteria",
+            has_more=False,
+        )
+
+    def _empty_response_custom(
+        self, city: str, check_in: str, check_out: str, note: str
+    ) -> HotelSearchResponse:
+        return HotelSearchResponse(
+            hotels=[],
+            city=city,
+            check_in=check_in,
+            check_out=check_out,
+            total_found=0,
+            session_id="",
+            applied_filters_summary=note,
+            has_more=False,
+        )

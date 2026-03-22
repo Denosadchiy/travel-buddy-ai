@@ -332,6 +332,63 @@ class Settings(BaseSettings):
         description="Factor to expand search when insufficient candidates (e.g., 2.0 = double radius)"
     )
 
+    # =========================================================================
+    # Hotel Picker — Booking.com / RapidAPI
+    # =========================================================================
+
+    rapidapi_key: str = Field(
+        default="",
+        description="RapidAPI key for Booking.com (x-rapidapi-key header)"
+    )
+    rapidapi_host: str = Field(
+        default="booking-com15.p.rapidapi.com",
+        description="RapidAPI host for Booking.com (x-rapidapi-host header)"
+    )
+    booking_api_base_url: str = Field(
+        default="https://booking-com15.p.rapidapi.com",
+        description="Base URL for Booking.com RapidAPI (direct httpx calls, no MCP)"
+    )
+    hotel_search_timeout_seconds: int = Field(
+        default=15,
+        description="HTTP timeout for Booking.com API calls"
+    )
+    hotel_max_candidates: int = Field(
+        default=25,
+        description="Maximum finalist candidates for deep analysis (after L1 filter)"
+    )
+    hotel_results_count: int = Field(
+        default=10,
+        description="Number of hotel results to return in response"
+    )
+    hotel_session_ttl_minutes: int = Field(
+        default=30,
+        description="TTL for search session cache in minutes (for pagination)"
+    )
+
+    # Hotel LLM model tiering (empty string → use project default)
+    hotel_intent_model: str = Field(
+        default="",
+        description="Model for IntentParser; empty → TRIP_CHAT_MODEL"
+    )
+    hotel_review_model: str = Field(
+        default="",
+        description="Model for ReviewAnalyzer batches; empty → TRIP_CHAT_MODEL"
+    )
+    hotel_ranking_model: str = Field(
+        default="",
+        description="Model for MasterRanker; empty → TRIP_PLANNING_MODEL"
+    )
+    hotel_vision_model: str = Field(
+        default="",
+        description="Multimodal model for PhotoAnalyzer; empty → skip vision phase"
+    )
+
+    # Hotel LLM budget control
+    hotel_llm_budget_cents: float = Field(
+        default=50.0,
+        description="Max LLM spend per hotel search in cents (0 = unlimited)"
+    )
+
     # Server
     host: str = Field(default="0.0.0.0", description="Server host")
     port: int = Field(default=8000, description="Server port")
