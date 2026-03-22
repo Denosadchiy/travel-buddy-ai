@@ -66,6 +66,8 @@ class EmailStartResponse(BaseModel):
     """Response after starting email OTP flow."""
     challenge_id: str = Field(..., description="Challenge ID to use for verification")
     message: str = Field(default="OTP code sent to your email")
+    delivery_method: str = Field(default="email", description="How the OTP was delivered")
+    debug_code: Optional[str] = Field(default=None, description="OTP code returned in local debug mode")
 
 
 class EmailVerifyRequest(BaseModel):

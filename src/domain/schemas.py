@@ -34,6 +34,9 @@ class DailyRoutineRequest(BaseModel):
 class TripCreateRequest(BaseModel):
     """Request schema for creating a new trip (form submission)."""
     city: str = Field(description="Destination city", min_length=1, max_length=100)
+    city_geoname_id: Optional[int] = Field(default=None, ge=1, description="GeoNames city ID")
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90, description="Selected city latitude")
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180, description="Selected city longitude")
     start_date: date = Field(description="Trip start date")
     end_date: date = Field(description="Trip end date")
     num_travelers: int = Field(default=1, ge=1, le=20, description="Number of travelers")
@@ -123,6 +126,7 @@ class TripResponse(BaseModel):
     """Response schema for trip data (TripSpec state)."""
     id: UUID = Field(description="Unique trip ID")
     city: str
+    city_geoname_id: Optional[int] = Field(default=None, description="GeoNames city ID")
     city_center_lat: Optional[float] = Field(default=None, description="City center latitude")
     city_center_lon: Optional[float] = Field(default=None, description="City center longitude")
     start_date: date
@@ -204,11 +208,29 @@ class TripChatRequest(BaseModel):
 
 
 class TripUpdates(BaseModel):
+    city: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    num_travelers: Optional[int] = None
     interests: Optional[list[str]] = Field(default_factory=list)
     pace: Optional[PaceLevel] = None
     budget: Optional[BudgetLevel] = None
     additional_preferences: Optional[dict[str, Any]] = Field(default_factory=dict)
     structured_preferences: Optional[list[StructuredPreference]] = Field(default_factory=list)
+
+    @field_validator("city", mode="before")
+    @classmethod
+    def empty_city_to_none(cls, v: Any) -> Optional[str]:
+        if isinstance(v, str) and v.strip() == "":
+            return None
+        return v
+
+    @field_validator("start_date", "end_date", mode="before")
+    @classmethod
+    def empty_date_to_none(cls, v: Any) -> Optional[date]:
+        if v is None or (isinstance(v, str) and v.strip() == ""):
+            return None
+        return v
 
 class TripChatLLMResponse(BaseModel):
     """

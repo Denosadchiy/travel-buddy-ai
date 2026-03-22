@@ -380,6 +380,69 @@ async def fetch_city_photo_reference(city_name: str) -> Optional[str]:
         return None
 
 
+@dataclass
+class PlaceSearchResult:
+    place_id: str
+    name: str
+    address: Optional[str]
+    rating: Optional[float]
+    photo_references: list[str]
+
+
+async def search_places(query: str, place_type: str = "lodging") -> list[PlaceSearchResult]:
+    """
+    Text Search for hotels/places by name + city.
+    Returns a ranked list with place_id and photo references.
+    """
+    if not settings.google_maps_api_key:
+        raise RuntimeError("Google Maps API key is not configured")
+
+    params = {
+        "query": query,
+        "type": place_type,
+        "key": settings.google_maps_api_key,
+        "language": settings.google_places_default_language,
+    }
+
+    print(f"🌐 Google Places Text Search: query='{query}' type='{place_type}'")
+    async with httpx.AsyncClient(timeout=settings.google_places_timeout_seconds) as client:
+        try:
+            response = await client.get(
+                "https://maps.googleapis.com/maps/api/place/textsearch/json",
+                params=params,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except Exception as e:
+            print(f"❌ Google Places Text Search failed: {e}")
+            raise
+
+    status = data.get("status")
+    if status not in ("OK", "ZERO_RESULTS"):
+        raise RuntimeError(f"Google Places Text Search error: {status}")
+
+    results = []
+    for r in data.get("results", []):
+        pid = r.get("place_id")
+        if not pid:
+            continue
+        photo_refs = [
+            p["photo_reference"]
+            for p in (r.get("photos") or [])
+            if p.get("photo_reference")
+        ]
+        results.append(PlaceSearchResult(
+            place_id=pid,
+            name=r.get("name", ""),
+            address=r.get("formatted_address"),
+            rating=r.get("rating"),
+            photo_references=photo_refs,
+        ))
+
+    print(f"✅ Google Places Text Search: {len(results)} results for '{query}'")
+    return results
+
+
 async def fetch_place_photo(photo_reference: str, max_width: int = 1200) -> bytes:
     if not settings.google_maps_api_key:
         raise RuntimeError("Google Maps API key is not configured")
@@ -391,15 +454,40 @@ async def fetch_place_photo(photo_reference: str, max_width: int = 1200) -> byte
     }
 
     print(f"🌐 Google Place Photo API: Fetching photo_reference={photo_reference[:20]}...")
-    async with httpx.AsyncClient(timeout=settings.google_places_timeout_seconds, follow_redirects=True) as client:
-        try:
+
+    async def _fetch(*, verify_ssl: bool) -> bytes:
+        async with httpx.AsyncClient(
+            timeout=settings.google_places_timeout_seconds,
+            follow_redirects=True,
+            verify=verify_ssl,
+        ) as client:
             response = await client.get(settings.google_place_photo_base_url, params=params)
             response.raise_for_status()
-            print(f"✅ Google Place Photo API: Success ({len(response.content)} bytes)")
             return response.content
-        except httpx.HTTPStatusError as e:
-            print(f"❌ Google Place Photo API: HTTP {e.response.status_code}")
-            raise
-        except Exception as e:
+
+    try:
+        content = await _fetch(verify_ssl=True)
+        print(f"✅ Google Place Photo API: Success ({len(content)} bytes)")
+        return content
+    except httpx.ConnectError as e:
+        if "CERTIFICATE_VERIFY_FAILED" not in str(e):
             print(f"❌ Google Place Photo API: Failed - {type(e).__name__}: {e}")
             raise
+
+        print("⚠️ Google Place Photo API: SSL verification failed, retrying without certificate verification")
+        try:
+            content = await _fetch(verify_ssl=False)
+            print(f"✅ Google Place Photo API: Success after SSL retry ({len(content)} bytes)")
+            return content
+        except httpx.HTTPStatusError as retry_error:
+            print(f"❌ Google Place Photo API: HTTP {retry_error.response.status_code} after SSL retry")
+            raise
+        except Exception as retry_error:
+            print(f"❌ Google Place Photo API: Failed after SSL retry - {type(retry_error).__name__}: {retry_error}")
+            raise
+    except httpx.HTTPStatusError as e:
+        print(f"❌ Google Place Photo API: HTTP {e.response.status_code}")
+        raise
+    except Exception as e:
+        print(f"❌ Google Place Photo API: Failed - {type(e).__name__}: {e}")
+        raise

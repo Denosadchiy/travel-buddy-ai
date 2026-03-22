@@ -13,7 +13,7 @@ from src.auth.models import (
     SessionModel,
     OTPChallengeModel,
 )
-from src.auth.schemas import UserResponse, SessionResponse
+from src.auth.schemas import UserResponse, SessionResponse, EmailStartResponse
 from src.auth.jwt import (
     create_access_token,
     create_refresh_token,
@@ -28,8 +28,10 @@ from src.auth.providers import (
     google_provider,
     email_otp_provider,
     TokenVerificationError,
+    ProviderError,
 )
 from src.auth.config import auth_settings
+from src.config import settings
 
 
 class AuthService:
@@ -120,7 +122,7 @@ class AuthService:
         self,
         db: AsyncSession,
         email: str,
-    ) -> str:
+    ) -> EmailStartResponse:
         """
         Start email OTP authentication flow.
 
@@ -129,7 +131,7 @@ class AuthService:
             email: Email address
 
         Returns:
-            Challenge ID to use for verification
+            EmailStartResponse with challenge metadata
         """
         # Generate OTP
         code = email_otp_provider.generate_otp()
@@ -145,10 +147,23 @@ class AuthService:
         db.add(challenge)
         await db.flush()
 
-        # Send OTP email
-        await email_otp_provider.send_otp_email(email, code)
-
-        return str(challenge.id)
+        try:
+            await email_otp_provider.send_otp_email(email, code)
+            return EmailStartResponse(
+                challenge_id=str(challenge.id),
+                message="OTP code sent to your email",
+                delivery_method="email",
+            )
+        except ProviderError as exc:
+            if settings.debug:
+                print(f"[DEBUG OTP FALLBACK] {email}: {code} ({exc})")
+                return EmailStartResponse(
+                    challenge_id=str(challenge.id),
+                    message="Email delivery is temporarily unavailable. Use the one-time code below to continue.",
+                    delivery_method="debug",
+                    debug_code=code,
+                )
+            raise
 
     async def verify_email_auth(
         self,

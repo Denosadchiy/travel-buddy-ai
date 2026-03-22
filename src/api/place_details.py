@@ -8,12 +8,46 @@ from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from typing import List, Optional
+
+from pydantic import BaseModel
+
 from src.domain.schemas import PlaceDetailsResponse, PlacePhotoResponse, PlaceReviewResponse
-from src.infrastructure.google_place_details import fetch_place_details, fetch_place_photo
+from src.infrastructure.google_place_details import fetch_place_details, fetch_place_photo, search_places
 from src.infrastructure.database import get_db
 from src.infrastructure.models import POIModel
 
 router = APIRouter()
+
+
+class PlaceSearchResultResponse(BaseModel):
+    place_id: str
+    name: str
+    address: Optional[str] = None
+    rating: Optional[float] = None
+    photo_references: List[str] = []
+
+
+@router.get("/places/search", response_model=List[PlaceSearchResultResponse])
+async def search_places_endpoint(
+    query: str = Query(..., description="Hotel name + city, e.g. 'Hôtel du Marais Paris'"),
+    type: str = Query(default="lodging", description="Google place type"),
+):
+    try:
+        results = await search_places(query=query, place_type=type)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return [
+        PlaceSearchResultResponse(
+            place_id=r.place_id,
+            name=r.name,
+            address=r.address,
+            rating=r.rating,
+            photo_references=r.photo_references,
+        )
+        for r in results
+    ]
 
 
 @router.get("/places/{place_id}/details", response_model=PlaceDetailsResponse)

@@ -1,0 +1,53 @@
+{
+  "tier_a": [
+    "errors.access_denied",
+    "errors.apply_changes_failed",
+    "errors.auth_failed",
+    "errors.day_not_found",
+    "errors.invalid_request",
+    "errors.itinerary_not_found",
+    "errors.logout_failed",
+    "errors.macro_plan_failed",
+    "errors.macro_plan_not_found",
+    "errors.otp_send_failed",
+    "errors.place_not_found",
+    "errors.plan_failed",
+    "errors.token_refresh_failed",
+    "errors.trip_not_found",
+    "errors.unexpected_error",
+    "errors.verification_failed"
+  ],
+  "tier_b": [
+    "critique.blocks_overlap",
+    "critique.consecutive_intense",
+    "critique.day_too_busy",
+    "critique.end_before_start",
+    "critique.long_travel",
+    "critique.missing_breakfast",
+    "critique.missing_dinner",
+    "critique.missing_lunch",
+    "critique.nightlife_vs_sleep",
+    "critique.poi_closed",
+    "day_summary.default_summary",
+    "day_summary.empty_day",
+    "day_summary.with_theme",
+    "tempo.high",
+    "tempo.low",
+    "tempo.medium"
+  ],
+  "tier_c": [
+    "block_types.activity",
+    "block_types.meal",
+    "block_types.nightlife",
+    "block_types.rest",
+    "block_types.travel",
+    "presets.architecture",
+    "presets.art",
+    "presets.avoid_crowds",
+    "presets.cozy",
+    "presets.food",
+    "presets.nightlife",
+    "presets.overview",
+    "presets.walks"
+  ]
+}

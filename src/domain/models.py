@@ -3,18 +3,37 @@ Core domain models for the Trip Planning backend.
 All models use Pydantic v2 for type safety and validation.
 """
 import datetime as dt
-from typing import Optional
+from typing import Optional, Any
 from enum import Enum
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from uuid import UUID, uuid4
 
 
 class StructuredPreference(BaseModel):
     """Represents a specific, structured user preference."""
-    keyword: str = Field(description="Search keyword (e.g., 'georgian', 'techno', 'art')")
+    keyword: Optional[str] = Field(default=None, description="Search keyword (e.g., 'georgian', 'techno', 'art')")
     category: str = Field(description="Corresponding POI category (e.g., 'restaurant', 'nightlife', 'museum')")
     price_level: Optional[str] = Field(default=None, description="Price level ('cheap', 'moderate', 'expensive')")
     quantity: Optional[int] = Field(default=None, description="Number of such places requested")
+
+    @field_validator("quantity", mode="before")
+    @classmethod
+    def parse_quantity(cls, v: Any) -> Optional[int]:
+        """Handle LLM returning non-integer strings like 'multiple', 'more than usual'."""
+        if v is None:
+            return None
+        if isinstance(v, int):
+            return v
+        if isinstance(v, str):
+            try:
+                return int(v)
+            except ValueError:
+                return None
+        return None
+
+    def get_keyword(self) -> str:
+        """Return keyword, falling back to category if not provided."""
+        return self.keyword or self.category
 
 
 # Enums for constrained values
@@ -74,6 +93,7 @@ class TripSpec(BaseModel):
     """
     id: UUID = Field(default_factory=uuid4, description="Unique trip ID")
     city: str = Field(description="Destination city")
+    city_geoname_id: Optional[int] = Field(default=None, description="GeoNames city ID")
     city_center_lat: Optional[float] = Field(default=None, description="City center latitude (geocoded)")
     city_center_lon: Optional[float] = Field(default=None, description="City center longitude (geocoded)")
     start_date: dt.date = Field(description="Trip start date")

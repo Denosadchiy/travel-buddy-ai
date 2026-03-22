@@ -122,16 +122,12 @@ async def auth_email_start(
     Returns a challenge_id to use for verification.
     """
     try:
-        challenge_id = await auth_service.start_email_auth(
+        response = await auth_service.start_email_auth(
             db=db,
             email=request.email,
         )
         await db.commit()
-
-        return EmailStartResponse(
-            challenge_id=challenge_id,
-            message="OTP code sent to your email",
-        )
+        return response
 
     except Exception as e:
         await db.rollback()

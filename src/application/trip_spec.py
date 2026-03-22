@@ -117,6 +117,7 @@ class TripSpecCollector:
         return TripResponse(
             id=trip_model.id,
             city=trip_model.city,
+            city_geoname_id=trip_model.city_geoname_id,
             city_center_lat=trip_model.city_center_lat,
             city_center_lon=trip_model.city_center_lon,
             start_date=trip_model.start_date,
@@ -171,20 +172,21 @@ class TripSpecCollector:
         else:
             daily_routine = DailyRoutine()
 
-        # Geocode city to get coordinates
-        city_center_lat = None
-        city_center_lon = None
+        # Use provided city coordinates when available; otherwise geocode.
+        city_center_lat = request.latitude
+        city_center_lon = request.longitude
         geocoding_service = get_geocoding_service()
-        try:
-            geocoding_result = await geocoding_service.geocode_city(request.city)
-            if geocoding_result:
-                city_center_lat = geocoding_result.lat
-                city_center_lon = geocoding_result.lon
-                logger.info(f"Geocoded city '{request.city}' to ({city_center_lat}, {city_center_lon})")
-            else:
-                logger.warning(f"Could not geocode city '{request.city}', proceeding without coordinates")
-        except Exception as e:
-            logger.error(f"Error geocoding city '{request.city}': {e}")
+        if city_center_lat is None or city_center_lon is None:
+            try:
+                geocoding_result = await geocoding_service.geocode_city(request.city)
+                if geocoding_result:
+                    city_center_lat = geocoding_result.lat
+                    city_center_lon = geocoding_result.lon
+                    logger.info(f"Geocoded city '{request.city}' to ({city_center_lat}, {city_center_lon})")
+                else:
+                    logger.warning(f"Could not geocode city '{request.city}', proceeding without coordinates")
+            except Exception as e:
+                logger.error(f"Error geocoding city '{request.city}': {e}")
 
         # Geocode hotel location to get coordinates
         hotel_lat = None
@@ -220,6 +222,7 @@ class TripSpecCollector:
         # Create TripModel (ORM)
         trip_model = TripModel(
             city=request.city,
+            city_geoname_id=request.city_geoname_id,
             city_center_lat=city_center_lat,
             city_center_lon=city_center_lon,
             start_date=request.start_date,

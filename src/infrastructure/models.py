@@ -2,14 +2,26 @@
 SQLAlchemy ORM models for database tables.
 These are separate from domain models to maintain clean architecture.
 """
-from sqlalchemy import String, Integer, DateTime, JSON, Date, Float, Enum as SQLEnum, UniqueConstraint, Boolean
+from sqlalchemy import (
+    String,
+    Integer,
+    DateTime,
+    JSON,
+    Date,
+    Float,
+    Text,
+    Enum as SQLEnum,
+    UniqueConstraint,
+    Boolean,
+    Index,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime, date
 import uuid
 from typing import Optional, Any
 
 from src.infrastructure.database import Base
-from src.infrastructure.db_types import GUID
+from src.infrastructure.db_types import GUID, StringList
 from src.domain.models import PaceLevel, BudgetLevel
 
 
@@ -19,6 +31,7 @@ class TripModel(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
     city: Mapped[str] = mapped_column(String, nullable=False)
+    city_geoname_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     city_center_lat: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     city_center_lon: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -45,6 +58,23 @@ class TripModel(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class CityModel(Base):
+    """Database model for canonical world cities (GeoNames)."""
+    __tablename__ = "cities"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    geoname_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    name_ascii: Mapped[str] = mapped_column(Text, nullable=False)
+    alternate_names: Mapped[list[str]] = mapped_column(StringList(), nullable=False, default=list)
+    country_code: Mapped[str] = mapped_column(String(2), nullable=False)
+    country_name: Mapped[str] = mapped_column(Text, nullable=False)
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    population: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    timezone: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 class POIModel(Base):
@@ -194,3 +224,86 @@ class SavedTripModel(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class LocalizationEntryModel(Base):
+    """
+    Persistent localization store for translated key/value pairs.
+
+    One row per (translation_key, locale), with status and source hash metadata
+    to support machine-translation + human-review workflows.
+    """
+
+    __tablename__ = "localization_entries"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "translation_key",
+            "locale",
+            name="uq_localization_entries_key_locale",
+        ),
+        Index("ix_localization_entries_translation_key", "translation_key"),
+        Index("ix_localization_entries_locale", "locale"),
+        Index("ix_localization_entries_status", "status"),
+        Index("ix_localization_entries_source_hash", "source_hash"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    translation_key: Mapped[str] = mapped_column(String, nullable=False)
+    locale: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_language: Mapped[str] = mapped_column(String(16), nullable=False, default="en")
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    source_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+class LocalizationJobModel(Base):
+    """
+    Persistent translation queue for asynchronous machine-translation jobs.
+
+    One row per (translation_key, target_locale, source_hash).
+    """
+
+    __tablename__ = "localization_jobs"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "translation_key",
+            "target_locale",
+            "source_hash",
+            name="uq_localization_jobs_key_locale_hash",
+        ),
+        Index("ix_localization_jobs_status", "status"),
+        Index("ix_localization_jobs_next_attempt_at", "next_attempt_at"),
+        Index("ix_localization_jobs_target_locale", "target_locale"),
+        Index("ix_localization_jobs_translation_key", "translation_key"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(GUID(), primary_key=True, default=uuid.uuid4)
+    translation_key: Mapped[str] = mapped_column(String, nullable=False)
+    target_locale: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_locale: Mapped[str] = mapped_column(String(16), nullable=False, default="en")
+    source_text: Mapped[str] = mapped_column(Text, nullable=False)
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )

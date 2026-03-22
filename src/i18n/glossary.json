@@ -1,0 +1,14 @@
+{
+  "default": {
+    "Travel Buddy": "Travel Buddy",
+    "AI Studio": "AI Studio",
+    "Trip Planning API": "Trip Planning API"
+  },
+  "ru": {
+    "Travel Buddy": "Travel Buddy",
+    "AI Studio": "AI Studio"
+  },
+  "es": {
+    "Travel Buddy": "Travel Buddy"
+  }
+}

@@ -13,6 +13,7 @@ from typing import Optional, Any
 from functools import lru_cache
 from pathlib import Path
 from contextvars import ContextVar
+from dataclasses import dataclass
 import json
 import logging
 
@@ -36,7 +37,11 @@ class SupportedLanguage(str, Enum):
     GERMAN = "de"
 
     @classmethod
-    def from_code(cls, code: str) -> "SupportedLanguage":
+    def from_code(
+        cls,
+        code: str,
+        fallback: Optional["SupportedLanguage"] = None,
+    ) -> "SupportedLanguage":
         """
         Parse language code from various formats.
 
@@ -49,16 +54,28 @@ class SupportedLanguage(str, Enum):
             code: Language code string
 
         Returns:
-            Matching SupportedLanguage or ENGLISH as fallback
+            Matching SupportedLanguage or fallback language
+        """
+        resolved = cls.try_from_code(code)
+        if resolved is not None:
+            return resolved
+        return fallback or cls.ENGLISH
+
+    @classmethod
+    def try_from_code(cls, code: str) -> Optional["SupportedLanguage"]:
+        """
+        Try to parse a language code.
+
+        Returns:
+            Matching SupportedLanguage, or None if not supported.
         """
         if not code:
-            return cls.ENGLISH
+            return None
 
         # Remove quality value if present (e.g., "en;q=0.9" -> "en")
-        code = code.split(";")[0].strip()
-
-        # Normalize
-        normalized = code.lower()
+        normalized = code.split(";")[0].strip().lower()
+        if not normalized:
+            return None
 
         # Check exact match first
         for lang in cls:
@@ -76,7 +93,7 @@ class SupportedLanguage(str, Enum):
             if lang.value == base_code:
                 return lang
 
-        return cls.ENGLISH  # Default fallback
+        return None
 
     @property
     def display_name(self) -> str:
@@ -135,6 +152,117 @@ class LocaleContext:
     def reset(cls) -> None:
         """Reset to default (English)."""
         _current_language.set(None)
+
+
+@dataclass(frozen=True)
+class LocaleResolution:
+    """Resolved locale metadata for a request."""
+
+    language: SupportedLanguage
+    source: str
+    is_fallback: bool
+    raw_value: Optional[str] = None
+
+
+def _parse_accept_language_candidates(header_value: str) -> list[str]:
+    """
+    Parse Accept-Language and return codes ordered by q-value.
+    """
+    weighted: list[tuple[float, int, str]] = []
+    for index, part in enumerate(header_value.split(",")):
+        token = part.strip()
+        if not token:
+            continue
+
+        code = token
+        q = 1.0
+
+        if ";" in token:
+            code, *params = token.split(";")
+            code = code.strip()
+            for param in params:
+                param = param.strip()
+                if param.startswith("q="):
+                    try:
+                        q = float(param.split("=", 1)[1])
+                    except ValueError:
+                        q = 0.0
+                    break
+
+        if not code or code == "*":
+            continue
+
+        weighted.append((q, index, code))
+
+    weighted.sort(key=lambda item: (-item[0], item[1]))
+    return [code for _, _, code in weighted]
+
+
+def resolve_language(
+    *,
+    fallback_language: SupportedLanguage,
+    profile_locale: Optional[str] = None,
+    query_locale: Optional[str] = None,
+    explicit_locale: Optional[str] = None,
+    accept_language: Optional[str] = None,
+) -> LocaleResolution:
+    """
+    Resolve request language with explicit precedence.
+
+    Priority:
+    1. profile_locale
+    2. query_locale
+    3. explicit_locale (X-Language)
+    4. Accept-Language
+    5. fallback_language
+    """
+    if profile_locale:
+        resolved = SupportedLanguage.try_from_code(profile_locale)
+        if resolved is not None:
+            return LocaleResolution(
+                language=resolved,
+                source="profile",
+                is_fallback=False,
+                raw_value=profile_locale,
+            )
+
+    if query_locale:
+        resolved = SupportedLanguage.try_from_code(query_locale)
+        if resolved is not None:
+            return LocaleResolution(
+                language=resolved,
+                source="query",
+                is_fallback=False,
+                raw_value=query_locale,
+            )
+
+    if explicit_locale:
+        resolved = SupportedLanguage.try_from_code(explicit_locale)
+        if resolved is not None:
+            return LocaleResolution(
+                language=resolved,
+                source="header",
+                is_fallback=False,
+                raw_value=explicit_locale,
+            )
+
+    if accept_language:
+        for candidate in _parse_accept_language_candidates(accept_language):
+            resolved = SupportedLanguage.try_from_code(candidate)
+            if resolved is not None:
+                return LocaleResolution(
+                    language=resolved,
+                    source="accept-language",
+                    is_fallback=False,
+                    raw_value=candidate,
+                )
+
+    return LocaleResolution(
+        language=fallback_language,
+        source="fallback",
+        is_fallback=True,
+        raw_value=fallback_language.value,
+    )
 
 
 @lru_cache(maxsize=10)
@@ -238,6 +366,14 @@ def _get_nested(data: dict, key: str) -> Optional[str]:
             return None
 
     return current if isinstance(current, str) else None
+
+
+def lookup_translation(language: SupportedLanguage, key: str) -> Optional[str]:
+    """
+    Lookup raw translation value for a specific language and key.
+    """
+    translations = load_translations(language)
+    return _get_nested(translations, key)
 
 
 def get_llm_language_instruction(language: Optional[SupportedLanguage] = None) -> str:
