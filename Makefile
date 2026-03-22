@@ -1,6 +1,6 @@
 # Makefile for Trip Planning API
 
-.PHONY: help install dev up down logs db-migrate db-upgrade db-downgrade seed-pois test clean check-externals check-llm check-google-places check-google-routes
+.PHONY: help install dev up down logs db-migrate db-upgrade db-downgrade seed-pois test clean check-externals check-llm check-google-places check-google-routes i18n-audit i18n-check-tier-a i18n-seed-storage
 
 help:
 	@echo "Trip Planning API - Available Commands:"
@@ -20,6 +20,9 @@ help:
 	@echo ""
 	@echo "Testing:"
 	@echo "  make test               - Run tests with pytest"
+	@echo "  make i18n-audit         - Print i18n coverage + tier report"
+	@echo "  make i18n-check-tier-a  - Fail if Tier A keys are missing/invalid"
+	@echo "  make i18n-seed-storage  - Seed DB localization_entries from JSON files"
 	@echo "  make check-externals    - Check all external service integrations"
 	@echo "  make check-llm          - Check LLM / IO.NET connectivity"
 	@echo "  make check-google-places - Check Google Places API"
@@ -57,6 +60,15 @@ seed-pois:
 
 test:
 	pytest tests/ -v
+
+i18n-audit:
+	python3 scripts/i18n_audit.py
+
+i18n-check-tier-a:
+	python3 scripts/i18n_audit.py --check --check-tier-a --check-tier-coverage
+
+i18n-seed-storage:
+	python3 -m scripts.i18n_seed_storage
 
 # External service integration checks (manual, not part of pytest suite)
 check-externals:

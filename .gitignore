@@ -70,6 +70,7 @@ test_*.py
 test_*.sh
 test_*.log
 test_*.json
+!tests/test_*.py
 *_REPORT.md
 *_STATUS.md
 *_SUMMARY.md
@@ -88,3 +89,9 @@ PROMPT_FOR_NEW_CHAT.md
 QUICK_START_IOS_TEST.md
 IOS_TESTING_INSTRUCTIONS.md
 PLACE_REPLACEMENT_COMPLETE.md
+
+# Web client
+web/node_modules/
+web/dist/
+web/.env
+web/.env.local
