@@ -541,3 +541,79 @@ def get_route_engineer_llm_client(app_settings: Optional[Settings] = None) -> LL
         return AnthropicLLMClient(model=model)
     else:
         raise ValueError(f"Unknown LLM provider: {s.llm_provider}. Use 'ionet' or 'anthropic'.")
+
+
+# ---------------------------------------------------------------------------
+# Hotel Picker — model-tiered factory functions
+# ---------------------------------------------------------------------------
+
+def get_hotel_intent_llm_client(app_settings: Optional[Settings] = None) -> LLMClient:
+    """
+    Factory for IntentParser (Phase 1).
+    Uses HOTEL_INTENT_MODEL if set, otherwise falls back to TRIP_CHAT_MODEL.
+    """
+    s = app_settings or settings
+    model = s.hotel_intent_model if s.hotel_intent_model else s.trip_chat_model
+
+    if s.llm_provider == "ionet":
+        if not s.ionet_api_key:
+            raise ValueError("IO Intelligence API key is required. Set IONET_API_KEY.")
+        return IoNetLLMClient(
+            api_key=s.ionet_api_key,
+            model=model,
+            max_output_tokens=1024,
+            temperature=0.2,
+            base_url=s.ionet_base_url,
+        )
+    elif s.llm_provider == "anthropic":
+        return AnthropicLLMClient(model=model)
+    else:
+        raise ValueError(f"Unknown LLM provider: {s.llm_provider}.")
+
+
+def get_hotel_review_llm_client(app_settings: Optional[Settings] = None) -> LLMClient:
+    """
+    Factory for ReviewAnalyzer batches (Phase 4).
+    Uses HOTEL_REVIEW_MODEL if set, otherwise falls back to TRIP_CHAT_MODEL.
+    """
+    s = app_settings or settings
+    model = s.hotel_review_model if s.hotel_review_model else s.trip_chat_model
+
+    if s.llm_provider == "ionet":
+        if not s.ionet_api_key:
+            raise ValueError("IO Intelligence API key is required. Set IONET_API_KEY.")
+        return IoNetLLMClient(
+            api_key=s.ionet_api_key,
+            model=model,
+            max_output_tokens=2048,
+            temperature=0.2,
+            base_url=s.ionet_base_url,
+        )
+    elif s.llm_provider == "anthropic":
+        return AnthropicLLMClient(model=model)
+    else:
+        raise ValueError(f"Unknown LLM provider: {s.llm_provider}.")
+
+
+def get_hotel_ranking_llm_client(app_settings: Optional[Settings] = None) -> LLMClient:
+    """
+    Factory for MasterRanker (Phase 5).
+    Uses HOTEL_RANKING_MODEL if set, otherwise falls back to TRIP_PLANNING_MODEL.
+    """
+    s = app_settings or settings
+    model = s.hotel_ranking_model if s.hotel_ranking_model else s.trip_planning_model
+
+    if s.llm_provider == "ionet":
+        if not s.ionet_api_key:
+            raise ValueError("IO Intelligence API key is required. Set IONET_API_KEY.")
+        return IoNetLLMClient(
+            api_key=s.ionet_api_key,
+            model=model,
+            max_output_tokens=4096,
+            temperature=0.3,
+            base_url=s.ionet_base_url,
+        )
+    elif s.llm_provider == "anthropic":
+        return AnthropicLLMClient(model=model)
+    else:
+        raise ValueError(f"Unknown LLM provider: {s.llm_provider}.")

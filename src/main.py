@@ -1,13 +1,15 @@
 """
 Main FastAPI application entrypoint.
 """
+import asyncio
+from typing import Optional
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from src.config import settings
 from src.infrastructure.database import init_db
-from src.i18n import LocaleMiddleware
+from src.i18n import LocaleMiddleware, translation_queue_worker
 from src.api.health import router as health_router
 from src.api.trips import router as trips_router
 from src.api.trip_chat import router as trip_chat_router
@@ -22,6 +24,9 @@ from src.api.day_studio import router as day_studio_router, places_router
 from src.api.saved_trips import router as saved_trips_router
 from src.api.place_replacement import router as place_replacement_router
 from src.api.contact import router as contact_router
+from src.api.i18n import router as i18n_router
+from src.api.cities import router as cities_router
+from src.hotels.api.router import router as hotels_router
 
 
 @asynccontextmanager
@@ -36,9 +41,21 @@ async def lifespan(app: FastAPI):
         print("Auto-init DB: creating tables if missing")
         await init_db()
 
+    worker_task: Optional[asyncio.Task] = None
+    if settings.i18n_translation_worker_enabled:
+        print(
+            "i18n worker: enabled "
+            f"(provider={settings.i18n_translation_provider}, "
+            f"poll={settings.i18n_translation_poll_interval_seconds}s)"
+        )
+        worker_task = asyncio.create_task(translation_queue_worker.run_forever())
+
     yield
 
     # Shutdown
+    if worker_task is not None:
+        await translation_queue_worker.stop()
+        await worker_task
     print("Shutting down Trip Planning API")
 
 
@@ -80,6 +97,9 @@ app.include_router(places_router, prefix="/api")
 app.include_router(saved_trips_router, prefix="/api")
 app.include_router(place_replacement_router, prefix="/api")
 app.include_router(contact_router, prefix="/api")
+app.include_router(i18n_router, prefix="/api")
+app.include_router(cities_router, prefix="/api")
+app.include_router(hotels_router, prefix="/api")
 
 
 @app.get("/")

@@ -3,7 +3,7 @@ Configuration management for the Trip Planning backend.
 Uses Pydantic Settings to load configuration from environment variables.
 """
 from typing import Optional
-from pydantic import Field, model_validator
+from pydantic import Field, model_validator, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -50,6 +50,61 @@ class Settings(BaseSettings):
         elif self.llm_provider == 'anthropic':
             if not self.anthropic_api_key:
                 raise ValueError("ANTHROPIC_API_KEY is not set.")
+
+        supported_languages = self.i18n_supported_languages_list
+        if self.i18n_source_language not in supported_languages:
+            raise ValueError(
+                f"I18N_SOURCE_LANGUAGE={self.i18n_source_language} must be included in "
+                f"I18N_SUPPORTED_LANGUAGES={supported_languages}"
+            )
+        if self.i18n_fallback_language not in supported_languages:
+            raise ValueError(
+                f"I18N_FALLBACK_LANGUAGE={self.i18n_fallback_language} must be included in "
+                f"I18N_SUPPORTED_LANGUAGES={supported_languages}"
+            )
+        if self.i18n_budget_guard_enabled:
+            if self.i18n_max_chars_per_day <= 0:
+                raise ValueError("I18N_MAX_CHARS_PER_DAY must be > 0")
+            if self.i18n_max_chars_per_month <= 0:
+                raise ValueError("I18N_MAX_CHARS_PER_MONTH must be > 0")
+
+        allowed_translation_providers = {"echo", "google"}
+        if self.i18n_translation_provider not in allowed_translation_providers:
+            raise ValueError(
+                "I18N_TRANSLATION_PROVIDER must be one of: "
+                + ", ".join(sorted(allowed_translation_providers))
+            )
+        if self.i18n_translation_poll_interval_seconds <= 0:
+            raise ValueError("I18N_TRANSLATION_POLL_INTERVAL_SECONDS must be > 0")
+        if self.i18n_translation_max_attempts <= 0:
+            raise ValueError("I18N_TRANSLATION_MAX_ATTEMPTS must be > 0")
+        if self.i18n_translation_retry_backoff_seconds <= 0:
+            raise ValueError("I18N_TRANSLATION_RETRY_BACKOFF_SECONDS must be > 0")
+        if self.i18n_translation_timeout_seconds <= 0:
+            raise ValueError("I18N_TRANSLATION_TIMEOUT_SECONDS must be > 0")
+        if not (0 < self.i18n_budget_alert_day_ratio <= 1):
+            raise ValueError("I18N_BUDGET_ALERT_DAY_RATIO must be in (0, 1]")
+        if not (0 < self.i18n_budget_alert_month_ratio <= 1):
+            raise ValueError("I18N_BUDGET_ALERT_MONTH_RATIO must be in (0, 1]")
+        unsupported_rollout_locales = [
+            locale
+            for locale in self.i18n_rollout_enabled_locales_list
+            if locale not in supported_languages
+        ]
+        if unsupported_rollout_locales:
+            raise ValueError(
+                "I18N_ROLLOUT_ENABLED_LOCALES contains unsupported locales: "
+                + ", ".join(sorted(unsupported_rollout_locales))
+            )
+        if (
+            self.i18n_machine_translation_enabled
+            and self.i18n_translation_provider == "google"
+            and not self.google_translate_api_key
+        ):
+            raise ValueError(
+                "GOOGLE_TRANSLATE_API_KEY must be set when "
+                "I18N_MACHINE_TRANSLATION_ENABLED=true and I18N_TRANSLATION_PROVIDER=google"
+            )
         return self
 
     # Anthropic Claude (legacy/alternative provider)
@@ -204,8 +259,12 @@ class Settings(BaseSettings):
         default="https://maps.googleapis.com/maps/api/place/photo",
         description="Base URL for Google Places Photo API"
     )
+    google_translate_api_key: Optional[str] = Field(
+        default=None,
+        description="Google Cloud Translation API key"
+    )
     google_places_default_language: str = Field(
-        default="en",
+        default="ru",
         description="Default language for Places API responses"
     )
     google_places_default_radius_meters: int = Field(
@@ -332,6 +391,141 @@ class Settings(BaseSettings):
         description="Factor to expand search when insufficient candidates (e.g., 2.0 = double radius)"
     )
 
+    # i18n rollout and machine-translation guardrails
+    i18n_source_language: str = Field(
+        default="ru",
+        description="Primary source language for untranslated keys/content"
+    )
+    i18n_fallback_language: str = Field(
+        default="ru",
+        description="Global fallback language when localized value is missing"
+    )
+    i18n_supported_languages: str = Field(
+        default="en,ru,zh,fr,es,ar,de",
+        description="Comma-separated list of supported BCP-47 base language codes"
+    )
+    i18n_machine_translation_enabled: bool = Field(
+        default=False,
+        description="Enable machine translation provider calls (keep false in budget-safe mode)"
+    )
+    i18n_budget_guard_enabled: bool = Field(
+        default=True,
+        description="Hard guardrail to block translation calls when character limits are reached"
+    )
+    i18n_max_chars_per_day: int = Field(
+        default=50000,
+        description="Hard daily character budget for machine translation"
+    )
+    i18n_max_chars_per_month: int = Field(
+        default=300000,
+        description="Hard monthly character budget for machine translation"
+    )
+    i18n_translation_worker_enabled: bool = Field(
+        default=True,
+        description="Enable background translation queue worker"
+    )
+    i18n_translation_provider: str = Field(
+        default="echo",
+        description="Machine translation provider: 'echo' or 'google'"
+    )
+    i18n_translation_poll_interval_seconds: float = Field(
+        default=1.0,
+        description="Polling interval for translation queue worker"
+    )
+    i18n_translation_max_attempts: int = Field(
+        default=3,
+        description="Maximum retry attempts for failed translation jobs"
+    )
+    i18n_translation_retry_backoff_seconds: int = Field(
+        default=30,
+        description="Base retry backoff in seconds for failed translation jobs"
+    )
+    i18n_translation_timeout_seconds: int = Field(
+        default=12,
+        description="HTTP timeout for translation provider requests"
+    )
+    i18n_tier_a_require_manual_review: bool = Field(
+        default=True,
+        description="Require manual review before Tier A translations are served"
+    )
+    i18n_glossary_overrides_enabled: bool = Field(
+        default=True,
+        description="Apply glossary overrides to machine-translated text"
+    )
+    i18n_rollout_enforced: bool = Field(
+        default=False,
+        description="Enforce per-locale rollout feature flags at runtime"
+    )
+    i18n_rollout_enabled_locales: str = Field(
+        default="ru",
+        description="Comma-separated locales enabled when rollout enforcement is on"
+    )
+    i18n_budget_alert_day_ratio: float = Field(
+        default=0.8,
+        description="Trigger app-side day budget alert at this usage ratio"
+    )
+    i18n_budget_alert_month_ratio: float = Field(
+        default=0.8,
+        description="Trigger app-side month budget alert at this usage ratio"
+    )
+
+    # =========================================================================
+    # Hotel Picker — Booking.com / RapidAPI
+    # =========================================================================
+
+    rapidapi_key: str = Field(
+        default="",
+        description="RapidAPI key for Booking.com (x-rapidapi-key header)"
+    )
+    rapidapi_host: str = Field(
+        default="booking-com15.p.rapidapi.com",
+        description="RapidAPI host for Booking.com (x-rapidapi-host header)"
+    )
+    booking_api_base_url: str = Field(
+        default="https://booking-com15.p.rapidapi.com",
+        description="Base URL for Booking.com RapidAPI (direct httpx calls, no MCP)"
+    )
+    hotel_search_timeout_seconds: int = Field(
+        default=15,
+        description="HTTP timeout for Booking.com API calls"
+    )
+    hotel_max_candidates: int = Field(
+        default=25,
+        description="Maximum finalist candidates for deep analysis (after L1 filter)"
+    )
+    hotel_results_count: int = Field(
+        default=10,
+        description="Number of hotel results to return in response"
+    )
+    hotel_session_ttl_minutes: int = Field(
+        default=30,
+        description="TTL for search session cache in minutes (for pagination)"
+    )
+
+    # Hotel LLM model tiering (empty string → use project default)
+    hotel_intent_model: str = Field(
+        default="",
+        description="Model for IntentParser; empty → TRIP_CHAT_MODEL"
+    )
+    hotel_review_model: str = Field(
+        default="",
+        description="Model for ReviewAnalyzer batches; empty → TRIP_CHAT_MODEL"
+    )
+    hotel_ranking_model: str = Field(
+        default="",
+        description="Model for MasterRanker; empty → TRIP_PLANNING_MODEL"
+    )
+    hotel_vision_model: str = Field(
+        default="",
+        description="Multimodal model for PhotoAnalyzer; empty → skip vision phase"
+    )
+
+    # Hotel LLM budget control
+    hotel_llm_budget_cents: float = Field(
+        default=50.0,
+        description="Max LLM spend per hotel search in cents (0 = unlimited)"
+    )
+
     # Server
     host: str = Field(default="0.0.0.0", description="Server host")
     port: int = Field(default=8000, description="Server port")
@@ -340,6 +534,20 @@ class Settings(BaseSettings):
         default=False,
         description="Auto-create database tables on startup (dev only)"
     )
+
+    @field_validator("debug", mode="before")
+    @classmethod
+    def coerce_debug_value(cls, v):
+        """
+        Accept non-standard debug env values (for example DEBUG=release).
+        """
+        if isinstance(v, str):
+            normalized = v.strip().lower()
+            if normalized in {"release", "prod", "production", "false", "0", "no", "off"}:
+                return False
+            if normalized in {"debug", "dev", "development", "true", "1", "yes", "on"}:
+                return True
+        return v
 
     # CORS Configuration
     allowed_origins: str = Field(
@@ -353,6 +561,24 @@ class Settings(BaseSettings):
         if self.allowed_origins == "*":
             return ["*"]
         return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+
+    @property
+    def i18n_supported_languages_list(self) -> list[str]:
+        """Parse I18N_SUPPORTED_LANGUAGES into normalized language codes."""
+        return [
+            language.strip().lower()
+            for language in self.i18n_supported_languages.split(",")
+            if language.strip()
+        ]
+
+    @property
+    def i18n_rollout_enabled_locales_list(self) -> list[str]:
+        """Parse I18N_ROLLOUT_ENABLED_LOCALES into normalized language codes."""
+        return [
+            language.strip().lower()
+            for language in self.i18n_rollout_enabled_locales.split(",")
+            if language.strip()
+        ]
 
 
 # Global settings instance
