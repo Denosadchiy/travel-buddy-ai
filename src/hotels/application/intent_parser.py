@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import unicodedata
 from typing import Any
 
 from src.hotels.domain.schemas import (
@@ -24,6 +25,20 @@ from src.infrastructure.llm_client import get_hotel_intent_llm_client
 logger = logging.getLogger(__name__)
 
 _LLM_TIMEOUT = 8.0
+
+
+def _unicode_normalize_city(city: str) -> str:
+    """
+    Strip accents and normalize to ASCII as a first-pass city name normalization.
+    e.g. "München" → "Munchen", "São Paulo" → "Sao Paulo".
+    Non-ASCII scripts (Cyrillic, CJK) are left as-is (LLM handles those).
+    """
+    try:
+        nfkd = unicodedata.normalize("NFKD", city)
+        ascii_only = nfkd.encode("ascii", "ignore").decode("ascii").strip()
+        return ascii_only if ascii_only else city
+    except Exception:
+        return city
 
 _SYSTEM_PROMPT = """\
 You are an expert hotel search assistant. Analyze travel requests and extract
@@ -137,7 +152,8 @@ User's wishes (free text): "{request.user_wishes or ''}"
 {_FEW_SHOT}
 
 Return ONLY a JSON object with ALL of these fields:
-- api_filters: list[str] — filter codes from the reference above
+- city_for_booking: str — the city name as it MUST appear on Booking.com (in English or most common Latin-script form recognized by global hotel booking platforms). Examples: "Ciudad de Mexico" → "Mexico City", "Москва" → "Moscow", "東京" → "Tokyo", "Парис" → "Paris", "München" → "Munich", "São Paulo" → "Sao Paulo". If city is already in standard English form, return it unchanged.
+- api_filters: list[str] — filter codes from the reference above (MAX 4 filters from user_wishes analysis; do NOT include free_cancellation here)
 - price_min: float | null
 - price_max: float | null
 - sort_by: "bayesian_review_score" | "price" | "distance" | "popularity"
@@ -175,8 +191,14 @@ def _parse_llm_result(raw: dict, request: HotelSearchRequest) -> ParsedIntent:
     except Exception:
         weights = ScoringWeights()
 
+    # LLM api_filters: cap at 4 to prevent over-filtering
+    llm_filters = _safe_list(raw.get("api_filters"), [])[:4]
+
+    # city_for_booking: LLM provides the booking-platform-ready name
+    city_for_booking = str(raw.get("city_for_booking", "")).strip()
+
     return ParsedIntent(
-        api_filters=_safe_list(raw.get("api_filters"), []),
+        api_filters=llm_filters,
         price_min=_safe_float(raw.get("price_min"), request.budget_min),
         price_max=_safe_float(raw.get("price_max"), request.budget_max),
         sort_by=raw.get("sort_by", "bayesian_review_score"),
@@ -194,6 +216,9 @@ def _parse_llm_result(raw: dict, request: HotelSearchRequest) -> ParsedIntent:
         is_boutique_preferred=bool(raw.get("is_boutique_preferred", False)),
         implicit_needs=_safe_list(raw.get("implicit_needs"), []),
         scoring_weights=weights,
+        city_for_booking=city_for_booking,
+        stars_min=request.stars_min,
+        prefers_free_cancellation=request.free_cancellation,
     )
 
 
@@ -215,16 +240,17 @@ class IntentParser:
 
     def _deterministic_parse(self, request: HotelSearchRequest) -> ParsedIntent:
         """Build ParsedIntent purely from structured request fields (no LLM)."""
-        api_filters: list[str] = list(request.amenities) + list(request.property_types)
+        # User-specified amenity/property filters (hard — always included in API call)
+        user_filters: list[str] = list(request.amenities) + list(request.property_types)
 
-        if request.free_cancellation:
-            api_filters.append("free_cancellation::1")
+        # NOTE: free_cancellation is NOT added as an API hard filter here.
+        # It is stored as prefers_free_cancellation (soft preference / scoring bonus).
         if request.adults_only:
-            api_filters.append("stay_type::2")
+            user_filters.append("stay_type::2")
         if request.pets_allowed:
-            api_filters.append("facility::4")
+            user_filters.append("facility::4")
         if request.meal_plan:
-            api_filters.append(f"mealplan::{request.meal_plan}")
+            user_filters.append(f"mealplan::{request.meal_plan}")
 
         user_segment = "couple"
         if request.children_ages:
@@ -234,13 +260,20 @@ class IntentParser:
         elif request.adults > 4:
             user_segment = "group"
 
+        # Unicode-normalize city name as first-pass fallback
+        city_normalized = _unicode_normalize_city(request.city)
+
         return ParsedIntent(
-            api_filters=list(set(api_filters)),
+            api_filters=list(set(user_filters)),
+            user_api_filters=list(set(user_filters)),
             price_min=request.budget_min,
             price_max=request.budget_max,
             user_segment=user_segment,
             children_ages=list(request.children_ages),
             scoring_weights=ScoringWeights(),
+            stars_min=request.stars_min,
+            prefers_free_cancellation=request.free_cancellation,
+            city_for_booking=city_normalized,
         )
 
     async def parse(self, request: HotelSearchRequest) -> ParsedIntent:
@@ -266,14 +299,28 @@ class IntentParser:
             )
             llm_intent = _parse_llm_result(raw, request)
 
-            # Merge: union api_filters, LLM wins on semantic fields
-            merged_filters = list(set(base.api_filters + llm_intent.api_filters))
-            result = llm_intent.model_copy(update={"api_filters": merged_filters})
+            # Merge:
+            # - user_api_filters: hard user-specified filters (always kept)
+            # - LLM api_filters: capped at 4 (already done in _parse_llm_result)
+            # Combined = user filters + LLM filters (no duplicates)
+            merged_filters = list(set(base.user_api_filters + llm_intent.api_filters))
+
+            # Use LLM city_for_booking if it looks meaningful, else keep unicode fallback
+            city_for_booking = llm_intent.city_for_booking or base.city_for_booking
+
+            result = llm_intent.model_copy(update={
+                "api_filters": merged_filters,
+                "user_api_filters": base.user_api_filters,
+                "city_for_booking": city_for_booking,
+                "stars_min": request.stars_min,
+                "prefers_free_cancellation": request.free_cancellation,
+            })
 
             logger.info(
-                "IntentParser: LLM OK — segment=%s filters=%d weights=%s",
+                "IntentParser: LLM OK — segment=%s filters=%d city_normalized='%s' weights=%s",
                 result.user_segment,
                 len(result.api_filters),
+                city_for_booking,
                 {k: round(v, 2) for k, v in result.scoring_weights.model_dump().items()},
             )
             return result

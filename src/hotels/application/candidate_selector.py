@@ -29,7 +29,7 @@ _MAX_CANDIDATES = 25
 _PAGE_SIZE = 20   # Booking.com returns up to 20 per page
 
 
-def _extract_hotel_fields(h: dict) -> dict:
+def _extract_hotel_fields(h: dict, currency: str = "EUR") -> dict:
     """Normalise the nested searchHotels response into a flat dict."""
     prop = h.get("property", {})
     price_bd = prop.get("priceBreakdown", {})
@@ -48,7 +48,7 @@ def _extract_hotel_fields(h: dict) -> dict:
         "price_total": price_total,
         "price_per_night": price_per_night,
         "nights": nights,
-        "currency": gross.get("currency", "EUR"),
+        "currency": currency,  # use requested currency, not API response field (may be local)
         "sold_out": bool(prop.get("soldout")),
         "latitude": prop.get("latitude"),
         "longitude": prop.get("longitude"),
@@ -132,7 +132,7 @@ class CandidateSelector:
                 logger.warning("CandidateSelector: search page failed: %s", page)
                 continue
             for h in page:
-                flat = _extract_hotel_fields(h)
+                flat = _extract_hotel_fields(h, currency)
                 hid = flat["hotel_id"]
                 if hid and hid not in seen:
                     seen.add(hid)
@@ -201,7 +201,7 @@ class CandidateSelector:
         price_max_hard = (intent.price_max * budget_factor) if intent.price_max else None
         price_min_hard = (intent.price_min * 0.5) if intent.price_min else None
 
-        stars_min = None  # stars_min comes from HotelSearchRequest, not ParsedIntent directly
+        stars_min = intent.stars_min  # propagated from HotelSearchRequest via ParsedIntent
 
         survivors: list[dict] = []
         discarded = 0
@@ -216,6 +216,16 @@ class CandidateSelector:
             if h["review_score"] > 0 and h["review_score"] < min_score:
                 discarded += 1
                 continue
+
+            # Stars filter (only when user explicitly requested min stars)
+            # Also excludes unrated (0-star) properties when stars_min >= 3,
+            # since 0-star typically means "no star rating" not a low-quality property,
+            # but when user wants luxury (3★+) they expect star-rated hotels.
+            if stars_min:
+                hotel_stars = h["stars"]
+                if hotel_stars < stars_min and (hotel_stars > 0 or stars_min >= 3):
+                    discarded += 1
+                    continue
 
             # Price filter — compare price_per_night against per-night budget
             pn = h["price_per_night"]
@@ -233,6 +243,16 @@ class CandidateSelector:
 
         survivors.sort(key=lambda x: x["_base_score"], reverse=True)
         top = survivors[:_MAX_CANDIDATES]
+
+        # Adaptive: if very few finalists and score threshold > 6.5, relax by 0.5 and retry
+        if len(top) < 5 and min_score > 6.5 and not relaxed:
+            relaxed_score = min_score - 0.5
+            logger.info(
+                "CandidateSelector.apply_l1_filter: only %d finalists, relaxing score %.1f → %.1f",
+                len(top), min_score, relaxed_score,
+            )
+            relaxed_intent = intent.model_copy(update={"min_review_score": relaxed_score})
+            return self.apply_l1_filter(raw_hotels, relaxed_intent, relaxed=True)
 
         logger.info(
             "CandidateSelector.apply_l1_filter: %d → %d (discarded %d, relaxed=%s)",

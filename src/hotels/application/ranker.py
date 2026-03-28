@@ -41,7 +41,7 @@ from src.infrastructure.llm_client import get_hotel_ranking_llm_client
 
 logger = logging.getLogger(__name__)
 
-_RANK_TIMEOUT = 20.0
+_RANK_TIMEOUT = 40.0
 
 _SYSTEM_PROMPT = """\
 You are a world-class hotel recommendation expert. Rank hotels based on user preferences.
@@ -79,12 +79,6 @@ def _hotel_profile_summary(profile: HotelProfile) -> dict[str, Any]:
         "accommodation_type": raw.accommodation_type,
         "is_chain": raw.chaincode is not None,
         "key_facilities": [f.title for f in raw.facilities[:15]],
-        "category_scores": {
-            "cleanliness": raw.review_scores.cleanliness,
-            "location": raw.review_scores.location,
-            "staff": raw.review_scores.staff,
-            "value": raw.review_scores.value,
-        },
         "top_pros": ra.top_pros,
         "top_cons": ra.top_cons,
         "hidden_issues": ra.hidden_issues,
@@ -111,6 +105,7 @@ Budget max: {intent.price_max} {{}}/night
 Min review score: {intent.min_review_score}
 Boutique preferred: {intent.is_boutique_preferred}
 Remote work: {intent.is_remote_work}
+Prefers free cancellation: {intent.prefers_free_cancellation} (give bonus to hotels with free_cancellation=true)
 
 Scoring weights (priority guidance):
 {json.dumps(weights, indent=2)}
@@ -121,6 +116,7 @@ Hotels to rank:
 Tasks:
 1. Select and rank the TOP 10 hotels.
 2. For each top-10 hotel: provide ai_score (0-10), ai_match_reason (1-2 sentences, personal, specific), why_this_hotel (3 bullet points).
+   IMPORTANT for ai_match_reason: Each hotel MUST have a UNIQUE reason. Do NOT repeat generic phrases like "excellent location and comfortable rooms". Highlight what specifically distinguishes THIS hotel — its neighborhood, a standout amenity, design style, unusual value, specific guest praise, or anything memorable that sets it apart from the others in this list.
 3. For remaining hotels: brief filtered_out reason (10-15 words).
 4. Identify 3-5 "notable_excluded" hotels that nearly made the top-10.
 
@@ -202,12 +198,15 @@ class MasterRanker:
 
         except asyncio.TimeoutError:
             logger.warning(
-                "MasterRanker: LLM timeout (%.1fs), using formula fallback",
-                _RANK_TIMEOUT,
+                "MasterRanker: LLM timeout after %.1fs (limit=%.1fs), using formula fallback",
+                time.monotonic() - t0, _RANK_TIMEOUT,
             )
             return self.rank_fallback(hotels, intent)
         except Exception as exc:
-            logger.warning("MasterRanker: LLM error (%s), using formula fallback", exc)
+            logger.warning(
+                "MasterRanker: LLM error [%s] after %.1fs: %s — using formula fallback",
+                type(exc).__name__, time.monotonic() - t0, exc,
+            )
             return self.rank_fallback(hotels, intent)
 
     def rank_fallback(
@@ -315,6 +314,9 @@ class MasterRanker:
             fallback = self.rank_fallback(missing, ParsedIntent())
             ranked_top10.extend(fallback.ranked_top10[:10 - len(ranked_top10)])
 
+        # Ensure final list is sorted by ai_score descending (LLM may not guarantee it)
+        ranked_top10.sort(key=lambda r: r.ai_score, reverse=True)
+
         return MasterRankingResult(
             ranked_top10=ranked_top10[:10],
             filtered_out=filtered_out,
@@ -360,10 +362,13 @@ class MasterRanker:
             + w.location * location_score
         )
 
+        # Bonus: free cancellation preference
+        cancellation_bonus = 0.05 if (intent.prefers_free_cancellation and raw.free_cancellation) else 0.0
+
         # Penalty: dealbreaker found in cons or hidden issues
         penalty = self._dealbreaker_penalty(ra, intent)
 
-        return base_score * penalty
+        return (base_score + cancellation_bonus) * penalty
 
     def _semantic_match(self, raw: Any, intent: ParsedIntent) -> float:
         """Simple keyword overlap between semantic_criteria and hotel data."""

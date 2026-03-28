@@ -551,6 +551,7 @@ def get_hotel_intent_llm_client(app_settings: Optional[Settings] = None) -> LLMC
     """
     Factory for IntentParser (Phase 1).
     Uses HOTEL_INTENT_MODEL if set, otherwise falls back to TRIP_CHAT_MODEL.
+    Lower temperature (0.2) for deterministic structured output.
     """
     s = app_settings or settings
     model = s.hotel_intent_model if s.hotel_intent_model else s.trip_chat_model
@@ -575,6 +576,7 @@ def get_hotel_review_llm_client(app_settings: Optional[Settings] = None) -> LLMC
     """
     Factory for ReviewAnalyzer batches (Phase 4).
     Uses HOTEL_REVIEW_MODEL if set, otherwise falls back to TRIP_CHAT_MODEL.
+    Larger max_tokens (2048) for batch of 5 hotels.
     """
     s = app_settings or settings
     model = s.hotel_review_model if s.hotel_review_model else s.trip_chat_model
@@ -599,6 +601,7 @@ def get_hotel_ranking_llm_client(app_settings: Optional[Settings] = None) -> LLM
     """
     Factory for MasterRanker (Phase 5).
     Uses HOTEL_RANKING_MODEL if set, otherwise falls back to TRIP_PLANNING_MODEL.
+    Larger max_tokens (4096) for ranking 25 hotels.
     """
     s = app_settings or settings
     model = s.hotel_ranking_model if s.hotel_ranking_model else s.trip_planning_model
