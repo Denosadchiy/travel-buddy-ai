@@ -44,8 +44,38 @@ from src.hotels.infrastructure.booking_client import (
     BookingClient,
     DestinationNotFoundError,
 )
+from src.infrastructure.llm_client import get_hotel_intent_llm_client
 
 logger = logging.getLogger(__name__)
+
+_CITY_TRANSLATE_TIMEOUT = 5.0
+
+
+async def _translate_city_via_llm(city: str) -> str | None:
+    """
+    Minimal LLM call to translate a non-Latin city name to its Booking.com English equivalent.
+    Used as a last resort when the destination search returns suspiciously few hotels.
+    Returns None on any failure.
+    """
+    try:
+        llm = get_hotel_intent_llm_client()
+        prompt = (
+            f"What is the standard English name of this city as used on Booking.com? "
+            f"City: {city}\n"
+            "Return ONLY the English city name, nothing else. "
+            "Examples: Москва → Moscow, 東京 → Tokyo, München → Munich, Παρίσι → Paris, "
+            "北京 → Beijing, 서울 → Seoul, القاهرة → Cairo"
+        )
+        system = "You are a city name translator. Return only the English city name, one word or phrase, nothing else."
+        text = await asyncio.wait_for(
+            llm.generate_text(prompt, system, max_tokens=20),
+            timeout=_CITY_TRANSLATE_TIMEOUT,
+        )
+        translated = str(text).strip().strip('"').strip("'").split("\n")[0].strip()
+        return translated if translated else None
+    except Exception as exc:
+        logger.debug("_translate_city_via_llm: failed for '%s': %s", city, exc)
+        return None
 
 _DEADLINE = 62.0           # hard deadline seconds
 _VISION_MIN_REMAINING = 10.0   # skip vision if less time left
@@ -181,7 +211,12 @@ def _assemble_hotel_result(
         name=raw.name or f"Hotel {raw.hotel_id}",
         accommodation_type=raw.accommodation_type or "Hotel",
         stars=raw.stars,
-        is_boutique=raw.chaincode is None and raw.stars in (0, 3, 4),
+        is_boutique=(
+            raw.chaincode is None and raw.stars in (0, 3, 4, 5)
+        ) or any(
+            kw in (raw.name or "").lower()
+            for kw in ("boutique", "maison", "casa", "palazzo", "villa", "manor", "château")
+        ),
         url=raw.url or "",
         booking_url=booking_url,
         review_score=raw.review_score,
@@ -225,14 +260,34 @@ def _assemble_hotel_result(
     )
 
 
-def _filters_summary(intent: ParsedIntent, dest: DestinationResult) -> str:
+def _filters_summary(
+    intent: ParsedIntent,
+    dest: DestinationResult,
+    search_mode: str = "full",
+    effective_intent: ParsedIntent | None = None,
+) -> str:
     parts: list[str] = []
+
     if intent.price_max:
-        parts.append(f"Budget ≤{intent.price_max:.0f}/night")
+        eff_price = effective_intent.price_max if effective_intent else None
+        if eff_price and abs(eff_price - intent.price_max) > 1:
+            parts.append(f"Budget ≤{intent.price_max:.0f} (expanded to ≤{eff_price:.0f})")
+        else:
+            parts.append(f"Budget ≤{intent.price_max:.0f}/night")
+
     if intent.min_review_score > 0:
         parts.append(f"Score ≥{intent.min_review_score:.0f}")
+
     if intent.api_filters:
         parts.append(f"{len(intent.api_filters)} amenity filters")
+
+    if search_mode == "basic":
+        parts.append("⚠ filters relaxed — limited availability")
+    elif search_mode == "user_only":
+        parts.append("(AI filters relaxed)")
+    elif search_mode == "relax_cancel":
+        parts.append("(cancellation filter relaxed)")
+
     parts.append(f"{dest.name} ({dest.nr_hotels} hotels available)")
     return " · ".join(parts)
 
@@ -300,46 +355,73 @@ class HotelSearchOrchestrator:
             self._intent_parser.parse(request),
             self._resolve_destination(request.city),
         )
+
+        # City normalization retry strategy:
+        # If dest has suspiciously few hotels (< 10), the API likely matched a specific
+        # listing (e.g. an apartment named "Москва") rather than the city itself.
+        # Try: (1) LLM-normalized name from IntentParser, (2) LLM translation as last resort.
+        if dest.nr_hotels < 10:
+            # Step A: try city_for_booking from IntentParser (works when user_wishes provided)
+            candidate_names: list[str] = []
+            if intent.city_for_booking and intent.city_for_booking.lower() != request.city.lower():
+                candidate_names.append(intent.city_for_booking)
+
+            # Step B: if city contains non-ASCII chars not handled by unicode normalization,
+            # use a dedicated LLM translate call (handles Cyrillic, CJK, Arabic, etc.)
+            has_non_ascii = any(ord(c) > 127 for c in request.city)
+            if has_non_ascii and not candidate_names:
+                translated = await _translate_city_via_llm(request.city)
+                if translated and translated.lower() != request.city.lower():
+                    candidate_names.append(translated)
+
+            for candidate in candidate_names:
+                logger.info(
+                    "Phase 1: dest.nr_hotels=%d for '%s', retrying with '%s'",
+                    dest.nr_hotels, request.city, candidate,
+                )
+                try:
+                    dest2 = await self._resolve_destination(candidate)
+                    if dest2.nr_hotels > dest.nr_hotels:
+                        logger.info(
+                            "Phase 1: city normalization improved '%s'→'%s' (%d→%d hotels)",
+                            request.city, candidate, dest.nr_hotels, dest2.nr_hotels,
+                        )
+                        dest = dest2
+                        break  # found a better match, stop trying
+                except Exception as exc:
+                    logger.warning("Phase 1: city normalization retry '%s' failed: %s", candidate, exc)
+
         timings["phase1"] = elapsed() - p1
         logger.info(
-            "Phase 1: %.1fs | segment=%s filters=%d weights_sum=%.2f",
+            "Phase 1: %.1fs | segment=%s filters=%d city='%s' weights_sum=%.2f",
             timings["phase1"], intent.user_segment, len(intent.api_filters),
-            sum(intent.scoring_weights.model_dump().values()),
+            dest.name, sum(intent.scoring_weights.model_dump().values()),
         )
 
         # ── Phases 2–3: shared BookingClient ─────────────────────────
         await _report(2, city_name=dest.name)
         async with BookingClient() as booking_client:
 
-            # Phase 2a: wide funnel
+            # Phase 2a + 2b: wide funnel + L1 filter WITH cascade fallback
             p2a = elapsed()
-            raw_hotels = await self._selector.fetch_wide_funnel(
-                dest_result=dest,
-                intent=intent,
+            original_intent = intent  # preserve for applied_filters_summary transparency
+            raw_hotels, finalists, search_mode, effective_intent = await self._fetch_candidates_with_cascade(
                 booking_client=booking_client,
-                arrival_date=request.check_in,
-                departure_date=request.check_out,
-                adults=request.adults,
-                currency=request.currency,
-                children_age=children_age_str,
+                dest=dest,
+                intent=intent,
+                request=request,
+                children_age_str=children_age_str,
             )
-            timings["phase2a"] = elapsed() - p2a
-
-            if not raw_hotels:
-                logger.warning("Phase 2a: 0 candidates — empty response")
-                return self._empty_response(request)
-
-            # Phase 2b: L1 filter
-            relaxed = (dest.nr_hotels or 0) <= 25
-            finalists = self._selector.apply_l1_filter(raw_hotels, intent, relaxed=relaxed)
+            # Use effective_intent (may be relaxed) for downstream phases
+            intent = effective_intent
             timings["phase2"] = elapsed() - p2a
             logger.info(
-                "Phase 2: %.1fs | wide=%d → finalists=%d (relaxed=%s)",
-                timings["phase2"], len(raw_hotels), len(finalists), relaxed,
+                "Phase 2: %.1fs | mode=%s wide=%d → finalists=%d",
+                timings["phase2"], search_mode, len(raw_hotels), len(finalists),
             )
 
             if not finalists:
-                logger.warning("Phase 2b: all candidates filtered — empty response")
+                logger.warning("Phase 2: 0 finalists after all cascade attempts")
                 return self._empty_response(request)
 
             # Phase 3: deep data fetch
@@ -455,7 +537,11 @@ class HotelSearchOrchestrator:
             check_out=request.check_out,
             total_found=dest.nr_hotels or len(raw_hotels),
             session_id=session_id,
-            applied_filters_summary=_filters_summary(intent, dest),
+            applied_filters_summary=_filters_summary(
+                original_intent, dest,
+                search_mode=search_mode,
+                effective_intent=intent,  # may be relaxed after cascade
+            ),
             has_more=len(raw_hotels) > len(finalists),
         )
 
@@ -738,8 +824,42 @@ class HotelSearchOrchestrator:
     # ──────────────────────────────────────────────────────────────────
 
     async def _resolve_destination(self, city: str) -> DestinationResult:
+        """
+        Resolve city name to Booking.com destination.
+        Attempts Unicode normalization (strip accents) if primary search returns 0 hotels.
+        """
+        import unicodedata
+
         async with BookingClient() as bc:
-            return await bc.search_destination(city)
+            # Attempt 1: original city name
+            try:
+                result = await bc.search_destination(city)
+                if result.nr_hotels > 0:
+                    return result
+                # Got a result but 0 hotels — try unicode normalization
+            except Exception:
+                result = None
+
+            # Attempt 2: Unicode normalization (handles accented Latin chars)
+            try:
+                nfkd = unicodedata.normalize("NFKD", city)
+                ascii_city = nfkd.encode("ascii", "ignore").decode("ascii").strip()
+                if ascii_city and ascii_city.lower() != city.lower():
+                    result2 = await bc.search_destination(ascii_city)
+                    if result2.nr_hotels > 0:
+                        logger.info("_resolve_destination: unicode fallback '%s' → '%s' (%d hotels)",
+                                    city, ascii_city, result2.nr_hotels)
+                        return result2
+            except Exception:
+                pass
+
+            # Return whatever we got (even 0 hotels — cascade will handle it)
+            if result is not None:
+                return result
+
+            # Both failed — re-raise original error
+            from src.hotels.infrastructure.booking_client import DestinationNotFoundError
+            raise DestinationNotFoundError(f"No destination found for '{city}'")
 
     def _empty_response(self, request: HotelSearchRequest) -> HotelSearchResponse:
         return HotelSearchResponse(
@@ -752,6 +872,83 @@ class HotelSearchOrchestrator:
             applied_filters_summary="No hotels found matching your criteria",
             has_more=False,
         )
+
+    async def _fetch_candidates_with_cascade(
+        self,
+        booking_client: BookingClient,
+        dest: DestinationResult,
+        intent: ParsedIntent,
+        request: HotelSearchRequest,
+        children_age_str: str | None,
+    ) -> tuple[list[dict], list[dict], str, ParsedIntent]:
+        """
+        4-round cascade to prevent 0-result responses due to over-filtering.
+
+        Round 1 (full): all api_filters + price/score as-is
+        Round 2 (relax_cancel): drop free_cancellation from filters (if present)
+        Round 3 (user_only): keep only user_api_filters (drop LLM-generated)
+        Round 4 (basic): no api_filters, relaxed budget×1.3, min_score-1.0
+
+        Returns (raw_hotels, finalists, search_mode, effective_intent).
+        """
+        rounds = [
+            ("full", intent.api_filters, intent, False),
+        ]
+
+        # Round 2: drop free_cancellation (already removed from hard filters but may still slip in)
+        r2_filters = [f for f in intent.api_filters if "free_cancellation" not in f.lower()]
+        if r2_filters != intent.api_filters:
+            r2_intent = intent.model_copy(update={"api_filters": r2_filters})
+            rounds.append(("relax_cancel", r2_filters, r2_intent, False))
+
+        # Round 3: user amenities only (drop LLM-generated filters)
+        if intent.user_api_filters != intent.api_filters:
+            r3_intent = intent.model_copy(update={"api_filters": intent.user_api_filters})
+            rounds.append(("user_only", intent.user_api_filters, r3_intent, False))
+
+        # Round 4: no filters, relaxed thresholds
+        relaxed_score = max(6.0, intent.min_review_score - 1.0)
+        relaxed_price_max = (intent.price_max * 1.3) if intent.price_max else None
+        r4_intent = intent.model_copy(update={
+            "api_filters": [],
+            "min_review_score": relaxed_score,
+            "price_max": relaxed_price_max,
+        })
+        rounds.append(("basic", [], r4_intent, True))
+
+        for search_mode, filters, effective_intent, relaxed in rounds:
+            try:
+                raw_hotels = await self._selector.fetch_wide_funnel(
+                    dest_result=dest,
+                    intent=effective_intent,
+                    booking_client=booking_client,
+                    arrival_date=request.check_in,
+                    departure_date=request.check_out,
+                    adults=request.adults,
+                    currency=request.currency,
+                    children_age=children_age_str,
+                )
+            except Exception as exc:
+                logger.warning("Cascade round '%s' fetch failed: %s", search_mode, exc)
+                continue
+
+            finalists = self._selector.apply_l1_filter(raw_hotels, effective_intent, relaxed=relaxed)
+
+            if len(finalists) >= 5:
+                if search_mode != "full":
+                    logger.info(
+                        "Cascade: round '%s' succeeded → %d finalists (was 0 in earlier rounds)",
+                        search_mode, len(finalists),
+                    )
+                return raw_hotels, finalists, search_mode, effective_intent
+
+            logger.info(
+                "Cascade round '%s': only %d finalists, trying next round",
+                search_mode, len(finalists),
+            )
+
+        # All rounds exhausted — return whatever the last round gave us
+        return raw_hotels, finalists, search_mode, effective_intent  # type: ignore[return-value]
 
     def _empty_response_custom(
         self, city: str, check_in: str, check_out: str, note: str

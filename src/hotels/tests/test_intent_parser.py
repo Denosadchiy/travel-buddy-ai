@@ -86,7 +86,9 @@ async def test_intent_parser_deterministic_family() -> None:
     assert intent.children_ages == [5, 8]
     assert "facility::433" in intent.api_filters
     assert "facility::28" in intent.api_filters
-    assert "free_cancellation::1" in intent.api_filters
+    # free_cancellation is now a SOFT preference (scoring bonus), NOT a hard API filter
+    assert "free_cancellation::1" not in intent.api_filters
+    assert intent.prefers_free_cancellation is True
     assert intent.price_max == 200.0
 
     # Default weights should sum to ~1.0

@@ -358,13 +358,15 @@ class BookingClient:
         reviews_p1_task = self.get_hotel_reviews(hotel_id, page=1)
         reviews_p2_task = self.get_hotel_reviews(hotel_id, page=2)
         facilities_task = self.get_hotel_facilities(hotel_id)
+        photos_task = self.get_hotel_photos(hotel_id)
 
-        details, scores, reviews_p1, reviews_p2, facilities = await asyncio.gather(
+        details, scores, reviews_p1, reviews_p2, facilities, hotel_photos = await asyncio.gather(
             details_task,
             scores_task,
             reviews_p1_task,
             reviews_p2_task,
             facilities_task,
+            photos_task,
             return_exceptions=True,   # don't abort on partial failure
         )
 
@@ -465,8 +467,11 @@ class BookingClient:
                     charge_mode=payment.get("chargeMode", "UNKNOWN_CHARGE_MODE"),
                 ))
 
-        # --- Extract room photos (already fetched, no extra API call) ---
-        room_photos: list[str] = []
+        # --- Extract photos: room photos first, then hotel-level photos to fill up to 10 ---
+        photo_urls: list[str] = []
+        seen_photos: set[str] = set()
+
+        # Priority 1: room photos from getHotelDetails
         rooms_data = raw_details.get("rooms", {})
         if isinstance(rooms_data, dict):
             for room in rooms_data.values():
@@ -480,9 +485,26 @@ class BookingClient:
                         or photo.get("url_max300")
                         or photo.get("url_original")
                     )
-                    if url and url not in room_photos:
-                        room_photos.append(url)
-                if len(room_photos) >= 5:
+                    if url and url not in seen_photos:
+                        seen_photos.add(url)
+                        photo_urls.append(url)
+                if len(photo_urls) >= 10:
+                    break
+
+        # Priority 2: hotel-level photos from getHotelPhotos (fills if room photos < 10)
+        if not isinstance(hotel_photos, Exception) and isinstance(hotel_photos, list):
+            for photo in hotel_photos:
+                if not isinstance(photo, dict):
+                    continue
+                url = (
+                    photo.get("url_max500")
+                    or photo.get("url_max300")
+                    or photo.get("url_square1024")
+                )
+                if url and url not in seen_photos:
+                    seen_photos.add(url)
+                    photo_urls.append(url)
+                if len(photo_urls) >= 10:
                     break
 
         return HotelRawData(
@@ -501,7 +523,7 @@ class BookingClient:
             is_sold_out=bool(raw_details.get("soldout", 0)),
             price_per_night=price_per_night,
             total_price=total_price,
-            currency=raw_details.get("currency_code", currency),
+            currency=currency,  # always use requested currency (API field may return local currency)
             breakfast_included=bool(raw_details.get("hotel_include_breakfast", 0)),
             checkin_from=checkin_from,
             checkout_until=checkout_until,
@@ -515,7 +537,7 @@ class BookingClient:
             review_count=review_count,
             reviews=parsed_reviews,
             facilities=parsed_facilities,
-            photo_urls=room_photos[:5],
+            photo_urls=photo_urls[:10],
         )
 
 

@@ -63,8 +63,10 @@ class ParsedIntent(BaseModel):
     # --- API filter params ---
     api_filters: list[str] = Field(
         default_factory=list,
-        description='e.g. ["facility::107", "room_facility::23"]',
+        description='Combined user + LLM filters, e.g. ["facility::107", "room_facility::23"]',
     )
+    # User-specified filters only (from request.amenities/property_types) — never dropped in cascade
+    user_api_filters: list[str] = Field(default_factory=list)
     price_min: float | None = None
     price_max: float | None = None
     sort_by: str = "bayesian_review_score"
@@ -84,6 +86,13 @@ class ParsedIntent(BaseModel):
     is_remote_work: bool = False
     is_boutique_preferred: bool = False
     implicit_needs: list[str] = Field(default_factory=list)
+
+    # --- Constraints from HotelSearchRequest (propagated for cascade use) ---
+    stars_min: int | None = None
+    prefers_free_cancellation: bool = False  # soft bonus, NOT hard API filter
+
+    # --- City name normalized for Booking.com API (LLM or unicode fallback) ---
+    city_for_booking: str = ""
 
     # --- Dynamic scoring weights (sum=1.0, auto-normalised) ---
     scoring_weights: ScoringWeights = Field(default_factory=ScoringWeights)
