@@ -467,11 +467,27 @@ class BookingClient:
                     charge_mode=payment.get("chargeMode", "UNKNOWN_CHARGE_MODE"),
                 ))
 
-        # --- Extract photos: room photos first, then hotel-level photos to fill up to 10 ---
+        # --- Extract photos: hotel photos first, then room photos to fill up to 10 ---
         photo_urls: list[str] = []
         seen_photos: set[str] = set()
 
-        # Priority 1: room photos from getHotelDetails
+        # Priority 1: hotel-level photos from getHotelPhotos (exterior, lobby, common areas)
+        if not isinstance(hotel_photos, Exception) and isinstance(hotel_photos, list):
+            for photo in hotel_photos:
+                if not isinstance(photo, dict):
+                    continue
+                url = (
+                    photo.get("url_max500")
+                    or photo.get("url_max300")
+                    or photo.get("url_square1024")
+                )
+                if url and url not in seen_photos:
+                    seen_photos.add(url)
+                    photo_urls.append(url)
+                if len(photo_urls) >= 10:
+                    break
+
+        # Priority 2: room photos from getHotelDetails (fills if hotel photos < 10)
         rooms_data = raw_details.get("rooms", {})
         if isinstance(rooms_data, dict):
             for room in rooms_data.values():
@@ -488,22 +504,6 @@ class BookingClient:
                     if url and url not in seen_photos:
                         seen_photos.add(url)
                         photo_urls.append(url)
-                if len(photo_urls) >= 10:
-                    break
-
-        # Priority 2: hotel-level photos from getHotelPhotos (fills if room photos < 10)
-        if not isinstance(hotel_photos, Exception) and isinstance(hotel_photos, list):
-            for photo in hotel_photos:
-                if not isinstance(photo, dict):
-                    continue
-                url = (
-                    photo.get("url_max500")
-                    or photo.get("url_max300")
-                    or photo.get("url_square1024")
-                )
-                if url and url not in seen_photos:
-                    seen_photos.add(url)
-                    photo_urls.append(url)
                 if len(photo_urls) >= 10:
                     break
 
