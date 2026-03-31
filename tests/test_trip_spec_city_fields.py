@@ -108,3 +108,83 @@ async def test_create_trip_geocodes_when_coordinates_missing(monkeypatch: pytest
     assert response.city_center_lat == -34.6037
     assert response.city_center_lon == -58.3816
     assert geocoding_stub.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_create_trip_uses_client_hotel_coordinates(monkeypatch: pytest.MonkeyPatch, db_session: AsyncSession):
+    """When hotel_lat/hotel_lon are provided by client, skip geocoding hotel name."""
+    geocoding_stub = _StubGeocodingService(result=None)
+
+    async def _fake_photo(_: str):
+        return None
+
+    monkeypatch.setattr("src.application.trip_spec.get_geocoding_service", lambda: geocoding_stub)
+    monkeypatch.setattr("src.application.trip_spec.fetch_city_photo_reference", _fake_photo)
+
+    collector = TripSpecCollector()
+    request = TripCreateRequest(
+        city="Prague",
+        latitude=50.0755,
+        longitude=14.4378,
+        start_date=date(2026, 5, 10),
+        end_date=date(2026, 5, 14),
+        num_travelers=2,
+        pace="medium",
+        budget="medium",
+        interests=["food"],
+        hotel_location="Hotel Marais",
+        hotel_lat=50.0880,
+        hotel_lon=14.4208,
+    )
+
+    response = await collector.create_trip(request=request, db=db_session)
+
+    saved = (await db_session.execute(select(TripModel).where(TripModel.id == response.id))).scalars().one()
+    assert saved.hotel_lat == 50.0880
+    assert saved.hotel_lon == 14.4208
+    assert saved.hotel_location == "Hotel Marais"
+    # Geocoding should NOT be called for hotel (only for city if needed)
+    # With client lat/lon provided for city, geocoding calls = 0
+    assert geocoding_stub.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_create_trip_geocodes_hotel_when_no_coordinates(monkeypatch: pytest.MonkeyPatch, db_session: AsyncSession):
+    """When hotel_lat/hotel_lon NOT provided, fall back to geocoding hotel name."""
+    geocoding_stub = _StubGeocodingService(
+        result=GeocodingResult(
+            city="Hotel Marais, Prague",
+            lat=50.0880,
+            lon=14.4208,
+            formatted_address="Hotel Marais, Prague, Czech Republic",
+        )
+    )
+
+    async def _fake_photo(_: str):
+        return None
+
+    monkeypatch.setattr("src.application.trip_spec.get_geocoding_service", lambda: geocoding_stub)
+    monkeypatch.setattr("src.application.trip_spec.fetch_city_photo_reference", _fake_photo)
+
+    collector = TripSpecCollector()
+    request = TripCreateRequest(
+        city="Prague",
+        latitude=50.0755,
+        longitude=14.4378,
+        start_date=date(2026, 5, 10),
+        end_date=date(2026, 5, 14),
+        num_travelers=2,
+        pace="medium",
+        budget="medium",
+        interests=[],
+        hotel_location="Hotel Marais",
+        # hotel_lat and hotel_lon NOT provided
+    )
+
+    response = await collector.create_trip(request=request, db=db_session)
+
+    saved = (await db_session.execute(select(TripModel).where(TripModel.id == response.id))).scalars().one()
+    assert saved.hotel_lat == 50.0880
+    assert saved.hotel_lon == 14.4208
+    # Geocoding called once for hotel name
+    assert geocoding_stub.calls == 1
