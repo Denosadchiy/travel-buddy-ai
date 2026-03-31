@@ -188,10 +188,12 @@ class TripSpecCollector:
             except Exception as e:
                 logger.error(f"Error geocoding city '{request.city}': {e}")
 
-        # Geocode hotel location to get coordinates
-        hotel_lat = None
-        hotel_lon = None
-        if request.hotel_location:
+        # Use client-provided hotel coordinates if available, otherwise geocode
+        hotel_lat = getattr(request, 'hotel_lat', None)
+        hotel_lon = getattr(request, 'hotel_lon', None)
+        if hotel_lat is not None and hotel_lon is not None:
+            logger.info(f"Using client-provided hotel coordinates: ({hotel_lat}, {hotel_lon})")
+        elif request.hotel_location:
             try:
                 # Geocode hotel with city context for better accuracy
                 hotel_query = f"{request.hotel_location}, {request.city}"

@@ -47,6 +47,8 @@ class TripCreateRequest(BaseModel):
 
     daily_routine: Optional[DailyRoutineRequest] = Field(default=None, description="Daily routine preferences")
     hotel_location: Optional[str] = Field(default=None, max_length=500, description="Hotel location or address")
+    hotel_lat: Optional[float] = Field(default=None, ge=-90, le=90, description="Hotel latitude (from hotel picker)")
+    hotel_lon: Optional[float] = Field(default=None, ge=-180, le=180, description="Hotel longitude (from hotel picker)")
     additional_preferences: Optional[dict] = Field(default=None, description="Additional preferences")
 
     class Config:
