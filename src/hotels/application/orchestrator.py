@@ -356,40 +356,26 @@ class HotelSearchOrchestrator:
             self._resolve_destination(request.city),
         )
 
-        # City normalization retry strategy:
-        # If dest has suspiciously few hotels (< 10), the API likely matched a specific
-        # listing (e.g. an apartment named "Москва") rather than the city itself.
-        # Try: (1) LLM-normalized name from IntentParser, (2) LLM translation as last resort.
+        # City normalization retry: if dest has suspiciously few hotels (< 10),
+        # try IntentParser's city_for_booking as additional candidate.
+        # Note: _resolve_destination already handles LLM translation for non-Latin scripts,
+        # so we only need the IntentParser fallback here.
         if dest.nr_hotels < 10:
-            # Step A: try city_for_booking from IntentParser (works when user_wishes provided)
-            candidate_names: list[str] = []
             if intent.city_for_booking and intent.city_for_booking.lower() != request.city.lower():
-                candidate_names.append(intent.city_for_booking)
-
-            # Step B: if city contains non-ASCII chars not handled by unicode normalization,
-            # use a dedicated LLM translate call (handles Cyrillic, CJK, Arabic, etc.)
-            has_non_ascii = any(ord(c) > 127 for c in request.city)
-            if has_non_ascii and not candidate_names:
-                translated = await _translate_city_via_llm(request.city)
-                if translated and translated.lower() != request.city.lower():
-                    candidate_names.append(translated)
-
-            for candidate in candidate_names:
                 logger.info(
-                    "Phase 1: dest.nr_hotels=%d for '%s', retrying with '%s'",
-                    dest.nr_hotels, request.city, candidate,
+                    "Phase 1: dest.nr_hotels=%d for '%s', retrying with IntentParser suggestion '%s'",
+                    dest.nr_hotels, request.city, intent.city_for_booking,
                 )
                 try:
-                    dest2 = await self._resolve_destination(candidate)
+                    dest2 = await self._resolve_destination(intent.city_for_booking)
                     if dest2.nr_hotels > dest.nr_hotels:
                         logger.info(
                             "Phase 1: city normalization improved '%s'→'%s' (%d→%d hotels)",
-                            request.city, candidate, dest.nr_hotels, dest2.nr_hotels,
+                            request.city, intent.city_for_booking, dest.nr_hotels, dest2.nr_hotels,
                         )
                         dest = dest2
-                        break  # found a better match, stop trying
                 except Exception as exc:
-                    logger.warning("Phase 1: city normalization retry '%s' failed: %s", candidate, exc)
+                    logger.warning("Phase 1: city normalization retry '%s' failed: %s", intent.city_for_booking, exc)
 
         timings["phase1"] = elapsed() - p1
         logger.info(
@@ -826,38 +812,82 @@ class HotelSearchOrchestrator:
     async def _resolve_destination(self, city: str) -> DestinationResult:
         """
         Resolve city name to Booking.com destination.
-        Attempts Unicode normalization (strip accents) if primary search returns 0 hotels.
+
+        Strategy:
+          1. If city contains non-Latin chars (Cyrillic, CJK, Arabic, etc.),
+             translate to English FIRST via LLM — Booking.com API works best
+             with English/Latin city names. Use original as fallback.
+          2. Try the best candidate with Booking API.
+          3. Unicode normalization (strip accents) as last resort for Latin scripts.
         """
         import unicodedata
 
-        async with BookingClient() as bc:
-            # Attempt 1: original city name
-            try:
-                result = await bc.search_destination(city)
-                if result.nr_hotels > 0:
-                    return result
-                # Got a result but 0 hotels — try unicode normalization
-            except Exception:
-                result = None
+        has_non_latin = any(ord(c) > 127 for c in city)
 
-            # Attempt 2: Unicode normalization (handles accented Latin chars)
+        # Pre-translate non-Latin city names to English for Booking.com API
+        translated_city: str | None = None
+        if has_non_latin:
+            translated_city = await _translate_city_via_llm(city)
+            if translated_city:
+                logger.info(
+                    "_resolve_destination: pre-translated '%s' → '%s'",
+                    city, translated_city,
+                )
+
+        # Build ordered list of candidate names to try
+        candidates: list[str] = []
+        if translated_city and translated_city.lower() != city.lower():
+            candidates.append(translated_city)  # English name first (most reliable)
+        candidates.append(city)                  # original name as fallback
+
+        async with BookingClient() as bc:
+            best_result: DestinationResult | None = None
+
+            for candidate in candidates:
+                try:
+                    result = await bc.search_destination(candidate)
+                    if result.nr_hotels > 0:
+                        # Sanity check: if we translated, prefer translated result
+                        # If original also returned results, pick one with more hotels
+                        if best_result is None or result.nr_hotels > best_result.nr_hotels:
+                            best_result = result
+                        # If this is the translated (English) name and it found hotels, use it
+                        if candidate == translated_city:
+                            logger.info(
+                                "_resolve_destination: using translated '%s' → dest='%s' (%d hotels)",
+                                city, result.name, result.nr_hotels,
+                            )
+                            return result
+                except Exception as exc:
+                    logger.debug(
+                        "_resolve_destination: candidate '%s' failed: %s",
+                        candidate, exc,
+                    )
+
+            # If best_result found from original name, return it
+            if best_result is not None and best_result.nr_hotels > 0:
+                return best_result
+
+            # Attempt: Unicode normalization (handles accented Latin chars like München)
             try:
                 nfkd = unicodedata.normalize("NFKD", city)
                 ascii_city = nfkd.encode("ascii", "ignore").decode("ascii").strip()
                 if ascii_city and ascii_city.lower() != city.lower():
                     result2 = await bc.search_destination(ascii_city)
                     if result2.nr_hotels > 0:
-                        logger.info("_resolve_destination: unicode fallback '%s' → '%s' (%d hotels)",
-                                    city, ascii_city, result2.nr_hotels)
+                        logger.info(
+                            "_resolve_destination: unicode fallback '%s' → '%s' (%d hotels)",
+                            city, ascii_city, result2.nr_hotels,
+                        )
                         return result2
             except Exception:
                 pass
 
             # Return whatever we got (even 0 hotels — cascade will handle it)
-            if result is not None:
-                return result
+            if best_result is not None:
+                return best_result
 
-            # Both failed — re-raise original error
+            # All failed — re-raise
             from src.hotels.infrastructure.booking_client import DestinationNotFoundError
             raise DestinationNotFoundError(f"No destination found for '{city}'")
 
