@@ -495,7 +495,7 @@ class BookingClient:
                 raw_url = photo.get("url") or ""
                 if not raw_url:
                     continue
-                url = raw_url.split("?")[0].replace("/square1024/", "/max500/")
+                url = raw_url.replace("/square1024/", "/max500/")
                 if url in seen_photos:
                     continue
                 seen_photos.add(url)
