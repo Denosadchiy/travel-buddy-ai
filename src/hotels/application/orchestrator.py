@@ -241,7 +241,7 @@ def _assemble_hotel_result(
         distance_to_center_km=raw.distance_to_cc,
         latitude=raw.latitude or 0.0,
         longitude=raw.longitude or 0.0,
-        photos=raw.photo_urls[:5],
+        photos=raw.photo_urls[:50],
         key_facilities=key_facilities,
         breakfast_included=raw.breakfast_included,
         pets_allowed=pets_allowed,
