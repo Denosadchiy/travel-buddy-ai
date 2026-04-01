@@ -78,60 +78,6 @@ async def _with_retry(coro_fn, *args, **kwargs) -> Any:
 
 
 # =============================================================================
-# Photo ordering: hotel-level first, rooms last
-# =============================================================================
-
-_HOTEL_TAG_IDS: set[int] = {1, 2, 3, 6, 7, 10, 11, 13, 15, 24, 25, 27, 29}
-_ROOM_TAG_IDS: set[int] = {4, 5, 43}
-
-_HOTEL_KEYWORDS: list[str] = [
-    "exterior", "facade", "building", "outside", "front", "property",
-    "lobby", "reception", "entrance", "hall", "foyer", "lounge",
-    "pool", "spa", "jacuzzi", "wellness", "fitness",
-    "restaurant", "dining", "breakfast", "bar", "cafe",
-    "view", "balcony", "terrace", "panoram", "sea", "garden",
-]
-_ROOM_KEYWORDS: list[str] = [
-    "room", "bedroom", "suite", "bed", "bathroom", "shower", "toilet",
-]
-
-
-def _photo_sort_key(photo: dict) -> int:
-    """Return sort priority: 0 = hotel-level, 1 = unknown, 2 = room."""
-    tag_id = photo.get("tag_id")
-    if isinstance(tag_id, int):
-        if tag_id in _HOTEL_TAG_IDS:
-            return 0
-        if tag_id in _ROOM_TAG_IDS:
-            return 2
-        return 1
-
-    tag_name = (photo.get("tag_name") or "").lower()
-    if tag_name:
-        for kw in ("property", "lobby", "pool", "restaurant", "bar",
-                    "garden", "view", "facade", "exterior", "spa"):
-            if kw in tag_name:
-                return 0
-        for kw in ("room", "bed", "bathroom", "suite"):
-            if kw in tag_name:
-                return 2
-        return 1
-
-    url = (
-        photo.get("url_max500")
-        or photo.get("url_max300")
-        or photo.get("url_square1024")
-        or photo.get("url_original")
-        or ""
-    ).lower()
-    if any(kw in url for kw in _HOTEL_KEYWORDS):
-        return 0
-    if any(kw in url for kw in _ROOM_KEYWORDS):
-        return 2
-    return 1
-
-
-# =============================================================================
 # BookingClient
 # =============================================================================
 
@@ -521,31 +467,57 @@ class BookingClient:
                     charge_mode=payment.get("chargeMode", "UNKNOWN_CHARGE_MODE"),
                 ))
 
-        # --- Extract photos: hotel photos first, then room photos to fill up to 10 ---
+        # --- Extract photos: hotel-level first, room photos last ---
         photo_urls: list[str] = []
         seen_photos: set[str] = set()
 
-        # Priority 1: hotel-level photos from getHotelPhotos
-        # Sorted: hotel-level (exterior/lobby/pool/dining/view) first, rooms last
-        if not isinstance(hotel_photos, Exception) and isinstance(hotel_photos, list):
-            valid_photos = [p for p in hotel_photos if isinstance(p, dict)]
-            valid_photos.sort(key=_photo_sort_key)
+        # Collect room photo IDs to sort them after hotel-level photos
+        room_photo_ids: set[int] = set()
+        rooms_data = raw_details.get("rooms", {})
+        if isinstance(rooms_data, dict):
+            for room in rooms_data.values():
+                if not isinstance(room, dict):
+                    continue
+                for p in room.get("photos", []):
+                    if isinstance(p, dict) and p.get("photo_id"):
+                        room_photo_ids.add(int(p["photo_id"]))
 
-            for photo in valid_photos:
-                url = (
-                    photo.get("url_max500")
-                    or photo.get("url_max300")
-                    or photo.get("url_square1024")
-                )
-                if url and url not in seen_photos:
-                    seen_photos.add(url)
-                    photo_urls.append(url)
+        # Priority 1: hotel-level photos from getHotelPhotos
+        # API returns {id, url} with "square1024"; convert to "max500"
+        # Hotel-level photos (not in room_photo_ids) go first,
+        # room photos from the gallery go second as fallback
+        hotel_only_urls: list[str] = []
+        room_gallery_urls: list[str] = []
+        if not isinstance(hotel_photos, Exception) and isinstance(hotel_photos, list):
+            for photo in hotel_photos:
+                if not isinstance(photo, dict):
+                    continue
+                raw_url = photo.get("url") or ""
+                if not raw_url:
+                    continue
+                url = raw_url.split("?")[0].replace("/square1024/", "/max500/")
+                if url in seen_photos:
+                    continue
+                seen_photos.add(url)
+                photo_id = photo.get("id")
+                if isinstance(photo_id, int) and photo_id in room_photo_ids:
+                    room_gallery_urls.append(url)
+                else:
+                    hotel_only_urls.append(url)
+
+        # Take hotel photos first, then room gallery photos
+        for url in hotel_only_urls:
+            photo_urls.append(url)
+            if len(photo_urls) >= 10:
+                break
+        if len(photo_urls) < 10:
+            for url in room_gallery_urls:
+                photo_urls.append(url)
                 if len(photo_urls) >= 10:
                     break
 
-        # Priority 2: room photos from getHotelDetails (fills if hotel photos < 10)
-        rooms_data = raw_details.get("rooms", {})
-        if isinstance(rooms_data, dict):
+        # Priority 2: room photos from getHotelDetails (fills remaining slots)
+        if len(photo_urls) < 10 and isinstance(rooms_data, dict):
             for room in rooms_data.values():
                 if not isinstance(room, dict):
                     continue
