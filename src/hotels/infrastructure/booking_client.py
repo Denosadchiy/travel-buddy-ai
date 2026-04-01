@@ -78,6 +78,60 @@ async def _with_retry(coro_fn, *args, **kwargs) -> Any:
 
 
 # =============================================================================
+# Photo ordering: hotel-level first, rooms last
+# =============================================================================
+
+_HOTEL_TAG_IDS: set[int] = {1, 2, 3, 6, 7, 10, 11, 13, 15, 24, 25, 27, 29}
+_ROOM_TAG_IDS: set[int] = {4, 5, 43}
+
+_HOTEL_KEYWORDS: list[str] = [
+    "exterior", "facade", "building", "outside", "front", "property",
+    "lobby", "reception", "entrance", "hall", "foyer", "lounge",
+    "pool", "spa", "jacuzzi", "wellness", "fitness",
+    "restaurant", "dining", "breakfast", "bar", "cafe",
+    "view", "balcony", "terrace", "panoram", "sea", "garden",
+]
+_ROOM_KEYWORDS: list[str] = [
+    "room", "bedroom", "suite", "bed", "bathroom", "shower", "toilet",
+]
+
+
+def _photo_sort_key(photo: dict) -> int:
+    """Return sort priority: 0 = hotel-level, 1 = unknown, 2 = room."""
+    tag_id = photo.get("tag_id")
+    if isinstance(tag_id, int):
+        if tag_id in _HOTEL_TAG_IDS:
+            return 0
+        if tag_id in _ROOM_TAG_IDS:
+            return 2
+        return 1
+
+    tag_name = (photo.get("tag_name") or "").lower()
+    if tag_name:
+        for kw in ("property", "lobby", "pool", "restaurant", "bar",
+                    "garden", "view", "facade", "exterior", "spa"):
+            if kw in tag_name:
+                return 0
+        for kw in ("room", "bed", "bathroom", "suite"):
+            if kw in tag_name:
+                return 2
+        return 1
+
+    url = (
+        photo.get("url_max500")
+        or photo.get("url_max300")
+        or photo.get("url_square1024")
+        or photo.get("url_original")
+        or ""
+    ).lower()
+    if any(kw in url for kw in _HOTEL_KEYWORDS):
+        return 0
+    if any(kw in url for kw in _ROOM_KEYWORDS):
+        return 2
+    return 1
+
+
+# =============================================================================
 # BookingClient
 # =============================================================================
 
@@ -471,11 +525,13 @@ class BookingClient:
         photo_urls: list[str] = []
         seen_photos: set[str] = set()
 
-        # Priority 1: hotel-level photos from getHotelPhotos (exterior, lobby, common areas)
+        # Priority 1: hotel-level photos from getHotelPhotos
+        # Sorted: hotel-level (exterior/lobby/pool/dining/view) first, rooms last
         if not isinstance(hotel_photos, Exception) and isinstance(hotel_photos, list):
-            for photo in hotel_photos:
-                if not isinstance(photo, dict):
-                    continue
+            valid_photos = [p for p in hotel_photos if isinstance(p, dict)]
+            valid_photos.sort(key=_photo_sort_key)
+
+            for photo in valid_photos:
                 url = (
                     photo.get("url_max500")
                     or photo.get("url_max300")
