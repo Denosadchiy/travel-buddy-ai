@@ -78,7 +78,8 @@ async def _translate_city_via_llm(city: str) -> str | None:
         return None
 
 _DEADLINE = 62.0           # hard deadline seconds
-_VISION_MIN_REMAINING = 10.0   # skip vision if less time left
+_VISION_MIN_REMAINING = 12.0   # skip vision if less time left
+_VISION_PHASE_TIMEOUT = 10.0   # hard cap on entire Phase 6 (all 5 hotels)
 
 # Progress messages for SSE streaming
 _PHASE_MESSAGES: dict[str, dict[int, str]] = {
@@ -89,6 +90,7 @@ _PHASE_MESSAGES: dict[str, dict[int, str]] = {
         4: "Analyzing guest reviews…",
         5: "Finding your best matches…",
         6: "Analyzing hotel photos…",
+        7: "Preparing your results…",
     },
     "ru": {
         1: "Анализируем ваши предпочтения…",
@@ -97,10 +99,11 @@ _PHASE_MESSAGES: dict[str, dict[int, str]] = {
         4: "Анализируем отзывы гостей…",
         5: "Подбираем лучшие варианты для вас…",
         6: "Анализируем фотографии…",
+        7: "Готовим результаты…",
     },
 }
 
-_PHASE_PROGRESS = {1: 0.05, 2: 0.15, 3: 0.35, 4: 0.55, 5: 0.75, 6: 0.90}
+_PHASE_PROGRESS = {1: 0.05, 2: 0.15, 3: 0.35, 4: 0.55, 5: 0.75, 6: 0.90, 7: 0.97}
 
 
 # ---------------------------------------------------------------------------
@@ -469,14 +472,24 @@ class HotelSearchOrchestrator:
             await _report(6)
             p6 = elapsed()
             top5_ids = [r.hotel_id for r in ranking.ranked_top10[:5]]
-            async with BookingClient() as bc6:
-                photo_results = await self._photo.analyze_top_hotels(top5_ids, bc6, intent)
+            # Hard cap: if photo vision takes longer than _VISION_PHASE_TIMEOUT,
+            # skip it and continue to Phase 7 — results are still complete without photos.
+            try:
+                async with BookingClient() as bc6:
+                    photo_results = await asyncio.wait_for(
+                        self._photo.analyze_top_hotels(top5_ids, bc6, intent),
+                        timeout=_VISION_PHASE_TIMEOUT,
+                    )
+            except asyncio.TimeoutError:
+                logger.warning("Phase 6: timed out after %.1fs — skipping photo vision", _VISION_PHASE_TIMEOUT)
+                photo_results = {}
             timings["phase6"] = elapsed() - p6
             logger.info("Phase 6: %.1fs | %d photos", timings["phase6"], len(photo_results))
         else:
             logger.info("Phase 6: skipped (%.1fs remaining)", remaining())
 
         # ── Phase 7: assemble response ────────────────────────────────
+        await _report(7)
         profile_map = {p.hotel_id: p for p in profiles}
         hotels_out: list[HotelResult] = []
         for ranked_item in ranking.ranked_top10:
