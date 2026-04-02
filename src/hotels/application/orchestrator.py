@@ -77,8 +77,8 @@ async def _translate_city_via_llm(city: str) -> str | None:
         logger.debug("_translate_city_via_llm: failed for '%s': %s", city, exc)
         return None
 
-_DEADLINE = 62.0           # hard deadline seconds
-_VISION_MIN_REMAINING = 12.0   # skip vision if less time left
+_DEADLINE = 90.0           # hard deadline seconds (Railway + Booking.com can be slow)
+_VISION_MIN_REMAINING = 15.0   # skip vision if less time left
 _VISION_PHASE_TIMEOUT = 10.0   # hard cap on entire Phase 6 (all 5 hotels)
 
 # Progress messages for SSE streaming
