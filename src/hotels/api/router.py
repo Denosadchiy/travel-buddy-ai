@@ -11,10 +11,11 @@ FastAPI router for AI Hotel Picker endpoints.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from src.hotels.application.orchestrator import HotelSearchOrchestrator
@@ -102,7 +103,10 @@ async def search_more(request: SearchMoreRequest) -> HotelSearchResponse:
 # ---------------------------------------------------------------------------
 
 @router.post("/search/stream")
-async def search_hotels_stream(request: HotelSearchRequest) -> StreamingResponse:
+async def search_hotels_stream(
+    request: HotelSearchRequest,
+    http_request: Request,
+) -> StreamingResponse:
     """
     Full AI hotel search with Server-Sent Events progress updates.
 
@@ -131,6 +135,8 @@ async def search_hotels_stream(request: HotelSearchRequest) -> StreamingResponse
                 await queue.put({"type": "error", "status": 404, "message": str(exc)})
             except RateLimitError:
                 await queue.put({"type": "error", "status": 429, "message": "Rate limit exceeded"})
+            except asyncio.CancelledError:
+                logger.info("search_stream: task cancelled (client disconnected)")
             except Exception as exc:
                 logger.error("search_stream error: %s", exc, exc_info=True)
                 await queue.put({"type": "error", "status": 500, "message": "Internal server error"})
@@ -141,7 +147,16 @@ async def search_hotels_stream(request: HotelSearchRequest) -> StreamingResponse
 
         try:
             while True:
-                item = await queue.get()
+                # Poll with a short timeout so we can detect client disconnects
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    if await http_request.is_disconnected():
+                        logger.info("search_stream: client disconnected, cancelling search task")
+                        task.cancel()
+                        return
+                    continue
+
                 if item is None:
                     break
 
@@ -164,7 +179,10 @@ async def search_hotels_stream(request: HotelSearchRequest) -> StreamingResponse
                     yield f"event: done\ndata: {{}}\n\n"
                     break
         finally:
-            await task
+            if not task.done():
+                task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

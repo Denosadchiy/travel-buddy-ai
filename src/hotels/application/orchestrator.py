@@ -320,6 +320,21 @@ class HotelSearchOrchestrator:
         request: HotelSearchRequest,
         progress_callback: Callable | None = None,
     ) -> HotelSearchResponse:
+        """Enforce hard deadline then delegate to pipeline."""
+        try:
+            return await asyncio.wait_for(
+                self._run_pipeline(request, progress_callback),
+                timeout=_DEADLINE,
+            )
+        except asyncio.TimeoutError:
+            logger.error("Hotel search pipeline exceeded %ss deadline", _DEADLINE)
+            raise
+
+    async def _run_pipeline(
+        self,
+        request: HotelSearchRequest,
+        progress_callback: Callable | None = None,
+    ) -> HotelSearchResponse:
         """Full 7-phase hotel search pipeline (≤62s deadline)."""
         t0 = time.monotonic()
         timings: dict[str, float] = {}

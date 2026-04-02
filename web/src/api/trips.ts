@@ -8,9 +8,10 @@ export function createTrip(data: TripCreateRequest): Promise<TripResponse> {
   })
 }
 
-export function generatePlan(tripId: string): Promise<ItineraryResponse> {
+export function generatePlan(tripId: string, signal?: AbortSignal): Promise<ItineraryResponse> {
   return apiFetch(`/api/trips/${tripId}/plan`, {
     method: 'POST',
+    signal,
   })
 }
 

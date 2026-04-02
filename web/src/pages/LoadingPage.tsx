@@ -21,7 +21,13 @@ export default function LoadingPage() {
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState('')
   const [isRetrying, setIsRetrying] = useState(false)
+  const abortRef = useRef<AbortController | null>(null)
   const hasStarted = useRef(false)
+
+  // Abort in-flight request on unmount
+  useEffect(() => {
+    return () => { abortRef.current?.abort() }
+  }, [])
 
   // Cycle through steps
   useEffect(() => {
@@ -45,16 +51,26 @@ export default function LoadingPage() {
 
   const generate = async () => {
     if (!tripId) return
+    abortRef.current?.abort() // cancel any previous in-flight request
+    const controller = new AbortController()
+    abortRef.current = controller
     setError('')
     setProgress(5)
     try {
-      const itinerary = await generatePlan(tripId)
+      const itinerary = await generatePlan(tripId, controller.signal)
       setProgress(100)
       setItinerary(itinerary)
       setTimeout(() => {
         navigate(`/itinerary/${tripId}`, { replace: true })
       }, 400)
     } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        return // user clicked Cancel — navigation handled by handleCancel
+      }
+      if (err instanceof DOMException && err.name === 'TimeoutError') {
+        setError('Request timed out. Please check your connection and try again.')
+        return
+      }
       setError(err instanceof Error ? err.message : 'Failed to generate route')
     } finally {
       setIsRetrying(false)
@@ -67,6 +83,11 @@ export default function LoadingPage() {
       generate()
     }
   }, [tripId])
+
+  const handleCancel = () => {
+    abortRef.current?.abort()
+    navigate(-1)
+  }
 
   const handleRetry = () => {
     setIsRetrying(true)
@@ -186,6 +207,16 @@ export default function LoadingPage() {
               />
             ))}
           </div>
+        )}
+
+        {/* Cancel button — visible during loading */}
+        {!error && (
+          <button
+            onClick={handleCancel}
+            className="mt-8 px-5 py-2.5 rounded-xl border border-white/10 text-text-secondary hover:text-white hover:bg-white/5 transition-colors text-sm font-medium"
+          >
+            Cancel
+          </button>
         )}
 
         {/* Error state */}

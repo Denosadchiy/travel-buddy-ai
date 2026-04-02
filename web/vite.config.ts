@@ -16,5 +16,10 @@ export default defineConfig(({ mode }) => {
       ),
     },
     plugins: [react(), tailwindcss()],
+    test: {
+      globals: true,
+      environment: 'jsdom',
+      setupFiles: ['./src/test-setup.ts'],
+    },
   }
 })

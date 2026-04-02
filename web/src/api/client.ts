@@ -62,44 +62,61 @@ async function tryRefresh(): Promise<boolean> {
 
 export async function apiFetch<T>(
   path: string,
-  options: RequestInit = {}
+  options: RequestInit & { timeout?: number } = {}
 ): Promise<T> {
+  const { timeout = 75_000, signal: externalSignal, ...restOptions } = options
   const deviceId = getOrCreateDeviceId()
+
+  const controller = new AbortController()
+  const tid = setTimeout(() => controller.abort(new DOMException('Request timeout', 'TimeoutError')), timeout)
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      clearTimeout(tid)
+      throw externalSignal.reason ?? new DOMException('Aborted', 'AbortError')
+    }
+    externalSignal.addEventListener('abort', () => controller.abort(externalSignal.reason))
+  }
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'X-Device-Id': deviceId,
-    ...(options.headers as Record<string, string> || {}),
+    ...(restOptions.headers as Record<string, string> || {}),
   }
 
   if (accessToken) {
     headers['Authorization'] = `Bearer ${accessToken}`
   }
 
-  let res = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers,
-  })
+  try {
+    let res = await fetch(`${API_BASE_URL}${path}`, {
+      ...restOptions,
+      headers,
+      signal: controller.signal,
+    })
 
-  // Auto-refresh on 401
-  if (res.status === 401 && refreshToken) {
-    const refreshed = await tryRefresh()
-    if (refreshed) {
-      headers['Authorization'] = `Bearer ${accessToken}`
-      res = await fetch(`${API_BASE_URL}${path}`, {
-        ...options,
-        headers,
-      })
+    // Auto-refresh on 401
+    if (res.status === 401 && refreshToken) {
+      const refreshed = await tryRefresh()
+      if (refreshed) {
+        headers['Authorization'] = `Bearer ${accessToken}`
+        res = await fetch(`${API_BASE_URL}${path}`, {
+          ...restOptions,
+          headers,
+          signal: controller.signal,
+        })
+      }
     }
-  }
 
-  if (!res.ok) {
-    const errorBody = await res.json().catch(() => ({}))
-    throw new ApiError(res.status, errorBody.detail || res.statusText, errorBody)
-  }
+    if (!res.ok) {
+      const errorBody = await res.json().catch(() => ({}))
+      throw new ApiError(res.status, errorBody.detail || res.statusText, errorBody)
+    }
 
-  if (res.status === 204) return undefined as T
-  return res.json()
+    if (res.status === 204) return undefined as T
+    return res.json()
+  } finally {
+    clearTimeout(tid)
+  }
 }
 
 export class ApiError extends Error {
