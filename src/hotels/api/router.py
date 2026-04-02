@@ -145,16 +145,25 @@ async def search_hotels_stream(
 
         task = asyncio.create_task(run_search())
 
+        keepalive_ticks = 0  # each tick = 1s; send keepalive every 20s of silence
         try:
             while True:
                 # Poll with a short timeout so we can detect client disconnects
                 try:
                     item = await asyncio.wait_for(queue.get(), timeout=1.0)
+                    keepalive_ticks = 0  # reset on any real event
                 except asyncio.TimeoutError:
                     if await http_request.is_disconnected():
                         logger.info("search_stream: client disconnected, cancelling search task")
                         task.cancel()
                         return
+                    # Send SSE keepalive comment every 20s of silence so that
+                    # iOS URLSession resets its timeoutIntervalForRequest counter
+                    # (without this, 70s of silence → connection killed on device).
+                    keepalive_ticks += 1
+                    if keepalive_ticks >= 20:
+                        keepalive_ticks = 0
+                        yield ": keep-alive\n\n"
                     continue
 
                 if item is None:
