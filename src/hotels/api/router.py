@@ -143,6 +143,13 @@ async def search_hotels_stream(
             finally:
                 await queue.put(None)  # sentinel
 
+        # Send an immediate keepalive the moment the SSE stream opens.
+        # This ensures iOS URLSession receives at least one byte right after
+        # the HTTP response headers, which resets its timeoutIntervalForRequest
+        # timer. Without this, a Railway cold-start (30-60s) + 20s wait for
+        # the first timed keepalive could exceed the 70s timeout on real devices.
+        yield ": keep-alive\n\n"
+
         task = asyncio.create_task(run_search())
 
         keepalive_ticks = 0  # each tick = 1s; send keepalive every 20s of silence
