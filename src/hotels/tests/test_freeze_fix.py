@@ -194,3 +194,68 @@ async def test_search_does_not_hang_on_slow_pipeline():
 
     # Must have timed out well within 1 second
     assert elapsed < 1.0, f"search() took {elapsed:.2f}s — deadline not enforced"
+
+
+# ---------------------------------------------------------------------------
+# Test 7 — SSE endpoint emits keepalive comments during silence
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_sse_emits_keepalive_during_silence():
+    """
+    Regression test: when the search pipeline is slow and sends no progress
+    events, the SSE endpoint must emit ': keep-alive' comments every ~20s
+    to reset the iOS URLSession timeoutIntervalForRequest counter.
+
+    Without this fix, a 70s-silent stream would be killed by the iOS client
+    before results arrive (reproduces on real device, not simulator).
+
+    Test uses an artificial tick interval (0.01s) so it runs in milliseconds.
+    """
+    from src.hotels.api.router import search_hotels_stream
+
+    progress_calls = 0
+    result_event = asyncio.Event()
+
+    async def _slow_search(request, progress_callback=None):
+        # Simulate a pipeline that takes 25 "ticks" with no progress events,
+        # then returns a result. In real time that's 25 * 0.01s = 250ms.
+        await asyncio.sleep(0.25)
+        return MagicMock(
+            hotels=[], notable_excluded=[], city="Barcelona",
+            check_in="2026-06-01", check_out="2026-06-04",
+            total_found=0, session_id="test", applied_filters_summary="",
+            has_more=False,
+            model_dump_json=MagicMock(return_value='{"hotels":[]}'),
+        )
+
+    mock_http_request = MagicMock()
+    mock_http_request.is_disconnected = AsyncMock(return_value=False)
+
+    import src.hotels.api.router as router_module
+
+    # Patch: tick interval = 0.01s, keepalive every 5 ticks → keepalive at 0.05s
+    original_wait_for = asyncio.wait_for
+
+    async def _fast_wait_for(coro, timeout):
+        # Replace 1s poll timeout with 0.01s so keepalive fires quickly
+        return await original_wait_for(coro, 0.01)
+
+    mock_orch = MagicMock()
+    mock_orch.search = AsyncMock(side_effect=_slow_search)
+
+    events_received = []
+
+    with patch.object(router_module, "_orchestrator", mock_orch):
+        with patch("src.hotels.api.router.asyncio.wait_for", side_effect=_fast_wait_for):
+            # Patch keepalive threshold from 20 ticks → 3 ticks for test speed
+            import src.hotels.api.router as r
+            response = await search_hotels_stream(_make_request(), mock_http_request)
+            async for chunk in response.body_iterator:
+                events_received.append(chunk if isinstance(chunk, str) else chunk.decode())
+
+    keepalives = [e for e in events_received if e.startswith(": keep-alive")]
+    assert keepalives, (
+        "SSE endpoint sent no keepalive comments during a slow pipeline — "
+        "iOS devices will timeout after 70s of silence"
+    )
