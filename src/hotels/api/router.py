@@ -200,7 +200,19 @@ async def search_hotels_stream(
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            # Disable proxy/CDN buffering — critical for Railway (Fastly CDN).
+            # Without these, the CDN buffers the large result event (~30KB)
+            # and iOS URLSession never receives it, causing the app to freeze
+            # at 97% progress on real devices.
+            "Cache-Control": "no-cache, no-store",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
