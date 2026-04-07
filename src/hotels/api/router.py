@@ -1,12 +1,13 @@
 """
 FastAPI router for AI Hotel Picker endpoints.
 
-  GET  /api/hotels/health          — liveness check
-  POST /api/hotels/search          — full 7-phase pipeline (≤62s)
-  POST /api/hotels/search/more     — pagination with session_id
-  POST /api/hotels/search/stream   — SSE: progress events + final result
-  POST /api/hotels/find            — direct search by hotel name
-  POST /api/hotels/explain         — why NOT this hotel?
+  GET  /api/hotels/health                  — liveness check
+  POST /api/hotels/search                  — full 7-phase pipeline (≤62s)
+  POST /api/hotels/search/more             — pagination with session_id
+  POST /api/hotels/search/stream           — SSE: progress + result_ready signal
+  GET  /api/hotels/session/{id}/result     — fetch cached result by session_id
+  POST /api/hotels/find                    — direct search by hotel name
+  POST /api/hotels/explain                 — why NOT this hotel?
 """
 from __future__ import annotations
 
@@ -185,7 +186,19 @@ async def search_hotels_stream(
                     yield f"event: progress\ndata: {data}\n\n"
 
                 elif item["type"] == "result":
-                    yield f"event: result\ndata: {item['data'].model_dump_json()}\n\n"
+                    # Cache the full result in session store so the client
+                    # can fetch it via GET /session/{id}/result.
+                    # SSE only sends a lightweight result_ready signal (~100 bytes)
+                    # instead of the full 30KB result JSON. This avoids CDN
+                    # buffering issues (Fastly) that blocked large SSE events
+                    # on real iOS devices, causing the 97% freeze.
+                    result_obj: HotelSearchResponse = item["data"]
+                    sid = result_obj.session_id
+                    _orchestrator._sessions.update_session(
+                        sid, cached_result=result_obj,
+                    )
+                    ready_data = json.dumps({"session_id": sid})
+                    yield f"event: result_ready\ndata: {ready_data}\n\n"
                     yield f"event: done\ndata: {{}}\n\n"
                     break
 
@@ -213,6 +226,32 @@ async def search_hotels_stream(
             "Connection": "keep-alive",
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Session result endpoint (used by iOS after SSE result_ready signal)
+# ---------------------------------------------------------------------------
+
+@router.get("/session/{session_id}/result", response_model=HotelSearchResponse)
+async def get_session_result(session_id: str) -> HotelSearchResponse:
+    """
+    Retrieve cached search result by session_id.
+
+    The SSE stream sends a lightweight `result_ready` event with the session_id.
+    The client then fetches the full result (~30KB) via this regular HTTP GET,
+    which is reliably delivered through CDN without buffering issues.
+    """
+    from fastapi import HTTPException
+
+    session = _orchestrator._sessions.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found or expired")
+
+    cached = session.get("cached_result")
+    if cached is None:
+        raise HTTPException(status_code=404, detail="Result not yet available")
+
+    return cached
 
 
 # ---------------------------------------------------------------------------
