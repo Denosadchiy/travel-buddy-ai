@@ -235,8 +235,17 @@ class IntentParser:
         try:
             self._llm = get_hotel_intent_llm_client()
         except Exception as exc:
-            logger.warning("IntentParser: LLM unavailable (%s), deterministic mode only", exc)
+            logger.warning("IntentParser: LLM unavailable at init (%s), will retry per-request", exc)
             self._llm = None
+
+    def _ensure_llm(self) -> None:
+        """Lazy-retry LLM client creation if it failed at init time."""
+        if self._llm is None:
+            try:
+                self._llm = get_hotel_intent_llm_client()
+                logger.info("IntentParser: LLM client recovered on retry")
+            except Exception:
+                pass
 
     def _deterministic_parse(self, request: HotelSearchRequest) -> ParsedIntent:
         """Build ParsedIntent purely from structured request fields (no LLM)."""
@@ -286,6 +295,8 @@ class IntentParser:
           → purely deterministic result.
         """
         base = self._deterministic_parse(request)
+
+        self._ensure_llm()
 
         if not request.user_wishes or not self._llm:
             logger.info("IntentParser: deterministic mode (no user_wishes or no LLM)")

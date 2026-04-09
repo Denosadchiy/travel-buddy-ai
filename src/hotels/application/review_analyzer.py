@@ -131,8 +131,17 @@ class ReviewAnalyzer:
         try:
             self._llm = get_hotel_review_llm_client()
         except Exception as exc:
-            logger.warning("ReviewAnalyzer: LLM unavailable (%s), keyword fallback only", exc)
+            logger.warning("ReviewAnalyzer: LLM unavailable at init (%s), will retry per-request", exc)
             self._llm = None
+
+    def _ensure_llm(self) -> None:
+        """Lazy-retry LLM client creation if it failed at init time."""
+        if self._llm is None:
+            try:
+                self._llm = get_hotel_review_llm_client()
+                logger.info("ReviewAnalyzer: LLM client recovered on retry")
+            except Exception:
+                pass
 
     async def analyze_batch(
         self,
@@ -152,6 +161,7 @@ class ReviewAnalyzer:
         if not hotels:
             return {}
 
+        self._ensure_llm()
         t0 = time.monotonic()
 
         # Split into batches of BATCH_SIZE

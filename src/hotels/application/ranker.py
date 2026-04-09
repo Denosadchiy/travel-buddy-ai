@@ -159,8 +159,17 @@ class MasterRanker:
         try:
             self._llm = get_hotel_ranking_llm_client()
         except Exception as exc:
-            logger.warning("MasterRanker: LLM unavailable (%s), formula fallback only", exc)
+            logger.warning("MasterRanker: LLM unavailable at init (%s), will retry per-request", exc)
             self._llm = None
+
+    def _ensure_llm(self) -> None:
+        """Lazy-retry LLM client creation if it failed at init time."""
+        if self._llm is None:
+            try:
+                self._llm = get_hotel_ranking_llm_client()
+                logger.info("MasterRanker: LLM client recovered on retry")
+            except Exception:
+                pass  # stay None, will use formula fallback
 
     # ------------------------------------------------------------------
     # Public API
@@ -177,6 +186,8 @@ class MasterRanker:
         """
         if not hotels:
             return MasterRankingResult(ranked_top10=[])
+
+        self._ensure_llm()
 
         if not self._llm:
             logger.info("MasterRanker: using formula fallback (no LLM)")
