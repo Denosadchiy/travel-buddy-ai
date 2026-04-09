@@ -244,7 +244,9 @@ def _assemble_hotel_result(
         distance_to_center_km=raw.distance_to_cc,
         latitude=raw.latitude or 0.0,
         longitude=raw.longitude or 0.0,
-        photos=raw.photo_urls[:50],
+        # Передаём все фото в том же порядке, что вернул Booking.com.
+        # Клиент (iOS) показывает их как есть — без дополнительного ранжирования.
+        photos=raw.photo_urls,
         key_facilities=key_facilities,
         breakfast_included=raw.breakfast_included,
         pets_allowed=pets_allowed,

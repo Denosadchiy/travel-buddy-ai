@@ -107,26 +107,43 @@ class HotelSearchRequest(BaseModel):
     check_in: str = Field(description="YYYY-MM-DD")
     check_out: str = Field(description="YYYY-MM-DD")
     adults: int = Field(default=2, ge=1, le=30)
-    children_ages: list[int] = Field(default_factory=list)
+    children_ages: list[int] | None = Field(default_factory=list)
     budget_min: float | None = None
     budget_max: float | None = None
     currency: str = "EUR"
     stars_min: int | None = Field(default=None, ge=1, le=5)
     user_wishes: str | None = None    # free-text input for IntentParser
-    amenities: list[str] = Field(
+    amenities: list[str] | None = Field(
         default_factory=list,
         description='UI checkbox selections, e.g. ["facility::107", "room_facility::23"]',
     )
-    property_types: list[str] = Field(
+    property_types: list[str] | None = Field(
         default_factory=list,
         description='e.g. ["property_type::204"]',
     )
     meal_plan: str | None = None
-    free_cancellation: bool = False
-    adults_only: bool = False
-    pets_allowed: bool = False
+    free_cancellation: bool | None = False
+    adults_only: bool | None = False
+    pets_allowed: bool | None = False
     session_id: str | None = None    # present when paginating
     offset: int = 0
+
+    @model_validator(mode="after")
+    def coerce_nulls(self) -> "HotelSearchRequest":
+        """Convert None → default for fields that iOS may send as null."""
+        if self.children_ages is None:
+            self.children_ages = []
+        if self.amenities is None:
+            self.amenities = []
+        if self.property_types is None:
+            self.property_types = []
+        if self.free_cancellation is None:
+            self.free_cancellation = False
+        if self.adults_only is None:
+            self.adults_only = False
+        if self.pets_allowed is None:
+            self.pets_allowed = False
+        return self
 
 
 class HotelFindRequest(BaseModel):
@@ -173,7 +190,10 @@ class HotelResult(BaseModel):
     longitude: float
 
     # Facilities & photos
-    photos: list[str] = Field(default_factory=list, description="top-5 photo URLs")
+    photos: list[str] = Field(
+        default_factory=list,
+        description="All hotel photo URLs from Booking.com in original order",
+    )
     key_facilities: list[str] = Field(
         default_factory=list,
         description='e.g. ["Free WiFi", "Pool", "Spa"]',
