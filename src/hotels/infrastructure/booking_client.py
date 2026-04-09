@@ -505,19 +505,12 @@ class BookingClient:
                 else:
                     hotel_only_urls.append(url)
 
-        # Take hotel photos first, then room gallery photos
-        for url in hotel_only_urls:
-            photo_urls.append(url)
-            if len(photo_urls) >= 50:
-                break
-        if len(photo_urls) < 50:
-            for url in room_gallery_urls:
-                photo_urls.append(url)
-                if len(photo_urls) >= 50:
-                    break
+        # Take hotel photos first, then room gallery photos (no limit)
+        photo_urls.extend(hotel_only_urls)
+        photo_urls.extend(room_gallery_urls)
 
-        # Priority 2: room photos from getHotelDetails (fills remaining slots)
-        if len(photo_urls) < 50 and isinstance(rooms_data, dict):
+        # Priority 2: room photos from getHotelDetails (deduplicated)
+        if isinstance(rooms_data, dict):
             for room in rooms_data.values():
                 if not isinstance(room, dict):
                     continue
@@ -532,8 +525,6 @@ class BookingClient:
                     if url and url not in seen_photos:
                         seen_photos.add(url)
                         photo_urls.append(url)
-                if len(photo_urls) >= 50:
-                    break
 
         return HotelRawData(
             hotel_id=hotel_id,
@@ -565,7 +556,7 @@ class BookingClient:
             review_count=review_count,
             reviews=parsed_reviews,
             facilities=parsed_facilities,
-            photo_urls=photo_urls[:10],
+            photo_urls=photo_urls,
         )
 
 
