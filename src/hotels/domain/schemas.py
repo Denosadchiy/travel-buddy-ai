@@ -115,7 +115,8 @@ class HotelSearchRequest(BaseModel):
     user_wishes: str | None = None    # free-text input for IntentParser
     amenities: list[str] | None = Field(
         default_factory=list,
-        description='UI checkbox selections, e.g. ["facility::107", "room_facility::23"]',
+        description='UI amenity IDs, e.g. ["pool", "spa", "pets", "fitness"]. '
+                    'Resolved to Booking.com facility codes by IntentParser.',
     )
     property_types: list[str] | None = Field(
         default_factory=list,
@@ -411,6 +412,26 @@ class PhotoAnalysis(BaseModel):
     room_size_estimate: str = "standard"   # spacious | standard | compact
     style_tags: list[str] = Field(default_factory=list)
     photo_match_score: float = 0.5         # 0–1, match with user's semantic_criteria
+
+
+class BudgetRange(BaseModel):
+    """Single budget preset range (e.g. Economy, Comfort, Luxury)."""
+    label: str = Field(description="Preset name, e.g. 'Эконом'")
+    min: float
+    max: float
+
+
+class PriceHintsResponse(BaseModel):
+    """
+    Response for GET /api/hotels/price-hints.
+    Returns percentile-based budget presets for a given city.
+    """
+    city: str
+    currency: str
+    presets: list[BudgetRange] = Field(
+        description="3 presets: economy (P10-P35), comfort (P35-P65), luxury (P65-P95)",
+    )
+    sample_size: int = Field(description="Number of hotels used for calculation")
 
 
 class SearchMoreRequest(BaseModel):

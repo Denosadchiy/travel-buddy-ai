@@ -2,6 +2,7 @@
 FastAPI router for AI Hotel Picker endpoints.
 
   GET  /api/hotels/health                  — liveness check
+  GET  /api/hotels/price-hints             — percentile-based budget presets for a city
   POST /api/hotels/search                  — full 7-phase pipeline (≤62s)
   POST /api/hotels/search/more             — pagination with session_id
   POST /api/hotels/search/stream           — SSE: progress + result_ready signal
@@ -15,21 +16,25 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 
 from src.hotels.application.orchestrator import HotelSearchOrchestrator
 from src.hotels.domain.schemas import (
+    BudgetRange,
     HotelExplainRequest,
     HotelExplanationResponse,
     HotelFindRequest,
     HotelSearchRequest,
     HotelSearchResponse,
+    PriceHintsResponse,
     SearchMoreRequest,
 )
 from src.hotels.infrastructure.booking_client import (
     BookingAPIError,
+    BookingClient,
     DestinationNotFoundError,
     RateLimitError,
 )
@@ -50,6 +55,119 @@ _orchestrator = HotelSearchOrchestrator()
 async def health() -> dict:
     """Liveness check for the hotels module."""
     return {"status": "ok", "module": "hotels"}
+
+
+# ---------------------------------------------------------------------------
+# Price hints — lightweight endpoint for dynamic budget presets
+# ---------------------------------------------------------------------------
+
+# In-memory cache: key = "city|currency" → (timestamp, PriceHintsResponse)
+_price_hints_cache: dict[str, tuple[float, PriceHintsResponse]] = {}
+_PRICE_HINTS_TTL = 86400  # 24 hours
+
+
+def _compute_percentiles(prices: list[float]) -> PriceHintsResponse | None:
+    """Compute economy/comfort/luxury percentile ranges from a list of prices."""
+    if len(prices) < 3:
+        return None
+    prices.sort()
+    n = len(prices)
+
+    def _percentile(p: float) -> float:
+        idx = p * (n - 1)
+        lo = int(idx)
+        hi = min(lo + 1, n - 1)
+        frac = idx - lo
+        return round(prices[lo] + frac * (prices[hi] - prices[lo]), 2)
+
+    p10 = _percentile(0.10)
+    p35 = _percentile(0.35)
+    p65 = _percentile(0.65)
+    p95 = _percentile(0.95)
+
+    # Snap to nice round numbers (nearest 5)
+    def _snap(v: float) -> float:
+        return round(v / 5) * 5 or 5
+
+    return [
+        BudgetRange(label="Эконом", min=_snap(p10), max=_snap(p35)),
+        BudgetRange(label="Комфорт", min=_snap(p35), max=_snap(p65)),
+        BudgetRange(label="Люкс", min=_snap(p65), max=_snap(p95)),
+    ]
+
+
+@router.get("/price-hints", response_model=PriceHintsResponse)
+async def price_hints(
+    city: str = Query(..., min_length=1, description="City name, e.g. 'Paris'"),
+    currency: str = Query("EUR", description="Currency code"),
+    check_in: str = Query(..., description="YYYY-MM-DD"),
+    check_out: str = Query(..., description="YYYY-MM-DD"),
+) -> PriceHintsResponse:
+    """
+    Return percentile-based budget presets (economy/comfort/luxury) for a city.
+
+    Fetches ~20 hotels from Booking.com, computes P10/P35/P65/P95 price
+    percentiles, and caches the result for 24 hours per city+currency.
+    """
+    from fastapi import HTTPException
+
+    cache_key = f"{city.lower().strip()}|{currency.upper()}"
+
+    # Check cache
+    if cache_key in _price_hints_cache:
+        ts, cached_response = _price_hints_cache[cache_key]
+        if time.time() - ts < _PRICE_HINTS_TTL:
+            return cached_response
+
+    try:
+        async with BookingClient() as client:
+            dest = await client.search_destination(city)
+            hotels = await client.search_hotels(
+                dest_ids=dest.dest_id,
+                search_type=dest.search_type,
+                arrival_date=check_in,
+                departure_date=check_out,
+                currency_code=currency.upper(),
+                page_number=1,
+            )
+    except DestinationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except RateLimitError:
+        raise HTTPException(status_code=429, detail="Booking API rate limit exceeded")
+    except BookingAPIError as exc:
+        raise HTTPException(status_code=502, detail=f"Booking API error: {exc}")
+    except Exception as exc:
+        logger.error("price_hints unexpected error: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+    # Extract per-night prices from search results
+    prices: list[float] = []
+    for h in hotels:
+        price = (
+            h.get("price_per_night")
+            or h.get("min_total_price")
+            or h.get("composite_price_breakdown", {}).get("gross_amount_per_night", {}).get("value")
+        )
+        if price and float(price) > 0:
+            prices.append(float(price))
+
+    if len(prices) < 3:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Not enough hotel prices found for '{city}' to compute hints",
+        )
+
+    presets = _compute_percentiles(prices)
+
+    response = PriceHintsResponse(
+        city=city,
+        currency=currency.upper(),
+        presets=presets,
+        sample_size=len(prices),
+    )
+
+    _price_hints_cache[cache_key] = (time.time(), response)
+    return response
 
 
 # ---------------------------------------------------------------------------
