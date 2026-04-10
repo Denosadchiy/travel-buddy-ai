@@ -140,16 +140,32 @@ async def price_hints(
         logger.error("price_hints unexpected error: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
-    # Extract per-night prices from search results
+    # Extract per-night prices from search results.
+    # searchHotels returns nested structure: h["property"]["priceBreakdown"]["grossPrice"]["value"]
+    # which is the TOTAL price — divide by nights to get per-night.
+    from datetime import date as _date
+    try:
+        _ci = _date.fromisoformat(check_in)
+        _co = _date.fromisoformat(check_out)
+        _nights = max(1, (_co - _ci).days)
+    except (ValueError, TypeError):
+        _nights = 1
+
     prices: list[float] = []
     for h in hotels:
-        price = (
-            h.get("price_per_night")
-            or h.get("min_total_price")
-            or h.get("composite_price_breakdown", {}).get("gross_amount_per_night", {}).get("value")
-        )
-        if price and float(price) > 0:
-            prices.append(float(price))
+        prop = h.get("property", h)  # fallback to h itself if no "property" key
+        price_bd = prop.get("priceBreakdown", {})
+        gross = price_bd.get("grossPrice", {})
+        total = float(gross.get("value") or 0.0)
+
+        if total > 0:
+            prices.append(total / _nights)
+            continue
+
+        # Fallback: try flat keys (in case API format varies)
+        fallback = h.get("min_total_price") or h.get("price_per_night")
+        if fallback and float(fallback) > 0:
+            prices.append(float(fallback))
 
     if len(prices) < 3:
         raise HTTPException(
