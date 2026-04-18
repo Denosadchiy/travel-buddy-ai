@@ -27,6 +27,8 @@ from src.api.contact import router as contact_router
 from src.api.i18n import router as i18n_router
 from src.api.cities import router as cities_router
 from src.hotels.api.router import router as hotels_router
+from src.guide.api.router import guide_router
+from src.guide.api.admin_router import guide_admin_router
 
 
 @asynccontextmanager
@@ -100,6 +102,16 @@ app.include_router(contact_router, prefix="/api")
 app.include_router(i18n_router, prefix="/api")
 app.include_router(cities_router, prefix="/api")
 app.include_router(hotels_router, prefix="/api")
+app.include_router(guide_router, prefix="/api")
+app.include_router(guide_admin_router, prefix="/api")
+
+# Static file serving for guide audio (dev/staging — production uses S3/CDN)
+import os
+from pathlib import Path
+_audio_dir = Path("data/audio")
+if _audio_dir.exists():
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/audio", StaticFiles(directory=str(_audio_dir)), name="guide-audio")
 
 
 @app.get("/")

@@ -4,6 +4,7 @@ uvicorn[standard]==0.27.0
 gunicorn==21.2.0
 pydantic[email]==2.5.3
 pydantic-settings==2.1.0
+python-multipart>=0.0.9      # Required for FastAPI multipart/form-data (Q&A audio upload)
 
 # Authentication
 PyJWT>=2.8.0
@@ -30,3 +31,24 @@ httpx==0.26.0  # For FastAPI test client
 
 # Utilities
 python-dotenv==1.0.0
+
+# Live Guide module
+geoalchemy2>=0.14.0     # PostGIS geometry columns for guide_* tables
+aioboto3>=12.0          # Async S3 client for guide audio storage
+websockets>=12.0        # ElevenLabs streaming TTS WebSocket
+google-auth>=2.0        # Google Play IAP validation (service account OAuth2)
+requests>=2.31.0        # Required by google-auth transport layer
+
+# Live Guide — City Seeder (Zone Discovery)
+scikit-learn>=1.4       # DBSCAN clustering for tourist zone discovery
+shapely>=2.0            # Convex hull geometry for zone boundary computation
+numpy>=1.24             # Coordinate arrays for DBSCAN haversine metric
+
+# Live Guide — City Seeder (Point Placement + Graph Building)
+osmnx>=1.9.0            # OSM pedestrian graph fetch and nearest-node projection
+networkx>=3.2           # Shortest-path computation for pedestrian graph edges
+
+# Live Guide — Audio Synthesis (Step 9)
+mutagen>=1.47           # MP3 duration detection (audio_synthesizer.py)
+num2words>=0.5          # TTS number-to-words conversion (text_validators.py)
+polyline>=2.0           # Google Maps encoded polyline decoder (walk_simulator.py)

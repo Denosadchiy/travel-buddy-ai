@@ -580,6 +580,391 @@ class Settings(BaseSettings):
             if language.strip()
         ]
 
+    # =========================================================================
+    # Live Audio Guide — ElevenLabs TTS
+    # =========================================================================
+
+    elevenlabs_api_key: str = Field(
+        default="",
+        description="ElevenLabs API key (xi-api-key header)"
+    )
+    elevenlabs_base_url: str = Field(
+        default="https://api.elevenlabs.io",
+        description="ElevenLabs REST API base URL"
+    )
+    elevenlabs_model_id: str = Field(
+        default="eleven_multilingual_v2",
+        description=(
+            "ElevenLabs model for batch TTS (pre-recorded content). "
+            "eleven_multilingual_v2: highest quality, supports EN+RU (29 languages). "
+            "Verified via MCP 2026-04-07."
+        )
+    )
+    elevenlabs_streaming_model_id: str = Field(
+        default="eleven_turbo_v2_5",
+        description=(
+            "ElevenLabs model for streaming Q&A (WebSocket). "
+            "eleven_turbo_v2_5: low latency + EN+RU support (32 languages). "
+            "Preferred over eleven_flash_v2_5 for better quality in narration."
+        )
+    )
+    elevenlabs_timeout_seconds: int = Field(
+        default=30,
+        description="HTTP timeout for ElevenLabs batch synthesis requests"
+    )
+    guide_tts_max_parallel: int = Field(
+        default=1,
+        description=(
+            "Max concurrent ElevenLabs TTS synthesis requests. "
+            "Free tier: 1. Starter/Creator: 2-3. Scale: 5+. "
+            "Increase when upgrading ElevenLabs subscription."
+        )
+    )
+
+    # =========================================================================
+    # Live Audio Guide — STT (Speech-to-Text)
+    # =========================================================================
+
+    stt_provider: str = Field(
+        default="deepgram",
+        description="STT provider: 'deepgram' (primary, low latency) or 'whisper' (fallback)"
+    )
+    deepgram_api_key: str = Field(
+        default="",
+        description="Deepgram API key for Nova-2 speech recognition"
+    )
+    openai_api_key: str = Field(
+        default="",
+        description="OpenAI API key for Whisper STT fallback"
+    )
+    stt_timeout_seconds: int = Field(
+        default=30,
+        description="HTTP timeout for STT transcription requests"
+    )
+
+    # =========================================================================
+    # Live Audio Guide — S3 / CDN Audio Storage
+    # =========================================================================
+
+    aws_access_key_id: str = Field(
+        default="",
+        description="AWS access key ID for S3 audio storage"
+    )
+    aws_secret_access_key: str = Field(
+        default="",
+        description="AWS secret access key for S3 audio storage"
+    )
+    aws_region: str = Field(
+        default="eu-central-1",
+        description="AWS region for S3 bucket"
+    )
+    aws_s3_bucket: str = Field(
+        default="",
+        description="S3 bucket name for guide audio files"
+    )
+    aws_cdn_base_url: str = Field(
+        default="",
+        description="CDN base URL served from the S3 bucket (e.g. https://cdn.locally.app)"
+    )
+
+    # =========================================================================
+    # Live Audio Guide — IAP (In-App Purchases)
+    # =========================================================================
+
+    apple_shared_secret: str = Field(
+        default="",
+        description="Apple App Store shared secret for verifyReceipt validation"
+    )
+    apple_bundle_id: str = Field(
+        default="com.locally.guide",
+        description="Apple app bundle ID for IAP product matching"
+    )
+    google_play_package_name: str = Field(
+        default="com.locally.guide",
+        description="Google Play package name for Publisher API validation"
+    )
+    google_service_account_json_b64: str = Field(
+        default="",
+        description=(
+            "Base64-encoded Google service account JSON for Android Publisher API OAuth2. "
+            "Generate via GCP IAM → Service Accounts → Keys → JSON → base64 encode."
+        )
+    )
+
+    # =========================================================================
+    # Live Audio Guide — Content Pipeline
+    # =========================================================================
+
+    guide_content_generation_timeout_seconds: int = Field(
+        default=120,
+        description="Timeout for LLM narrative generation per content block"
+    )
+    guide_coherence_score_threshold: float = Field(
+        default=3.5,
+        description=(
+            "Minimum coherence score for auto-approval of generated content. "
+            "Blocks below threshold → needs_manual_review."
+        )
+    )
+    guide_transition_coherence_threshold: float = Field(
+        default=4.0,
+        description="Minimum coherence score for transition/zone_transition blocks (stricter)"
+    )
+    guide_trial_seconds: int = Field(
+        default=600,
+        description="Free trial seconds granted on first guide session (default: 10 min)"
+    )
+
+    # =========================================================================
+    # Live Audio Guide — City Seeder (Zone Discovery)
+    # =========================================================================
+
+    seeder_dbscan_eps_m: float = Field(
+        default=400.0,
+        description=(
+            "DBSCAN epsilon in metres for tourist-zone clustering. "
+            "POIs within this distance are considered neighbours. "
+            "400m ≈ comfortable 5-min walk — keeps clusters in walkable districts."
+        )
+    )
+    seeder_dbscan_min_samples: int = Field(
+        default=10,
+        description=(
+            "DBSCAN min_samples: minimum POIs to form a zone cluster. "
+            "Lower = more (smaller) zones; higher = fewer (denser) zones. "
+            "10 matches the typical density of tourist districts in major cities."
+        )
+    )
+    seeder_min_poi_rating: float = Field(
+        default=4.0,
+        description=(
+            "Minimum Google Places rating for a POI to qualify for zone discovery. "
+            "4.0 filters out low-quality venues while retaining most tourist attractions."
+        )
+    )
+    seeder_min_poi_reviews: int = Field(
+        default=50,
+        description=(
+            "Minimum number of Google Places reviews for a POI to qualify. "
+            "Filters out obscure/newly-opened places with too few ratings to trust."
+        )
+    )
+    seeder_max_pois_per_type: int = Field(
+        default=60,
+        description=(
+            "Maximum POIs to fetch per Google Places type (Nearby Search paginates up to 60). "
+            "60 is the Google API hard limit across 3 pages of 20 results each."
+        )
+    )
+    seeder_max_parallel_poi_requests: int = Field(
+        default=3,
+        description=(
+            "Max concurrent Google Places Nearby Search requests during zone discovery. "
+            "3 stays well within Google's QPS limits on standard plans. "
+            "Increase to 5-10 on high-quota keys."
+        )
+    )
+
+    # =========================================================================
+    # Live Audio Guide — City Seeder (Point Placement + Graph Building)
+    # =========================================================================
+
+    seeder_max_snap_distance_m: float = Field(
+        default=50.0,
+        description=(
+            "Maximum distance (metres) a POI may be snapped to the nearest OSM pedestrian "
+            "node.  POIs further than this get is_approved=False and require manual review "
+            "(e.g. POI on an island, inside a gated complex, or on a motorway)."
+        )
+    )
+    seeder_connector_interval_m: float = Field(
+        default=80.0,
+        description=(
+            "Minimum distance (metres) between consecutive connector nodes on the "
+            "pedestrian graph.  Smaller values produce denser coverage and more "
+            "audio trigger points; larger values reduce DB size."
+        )
+    )
+    seeder_osmnx_cache_dir: str = Field(
+        default="./tmp/osmnx_cache",
+        description=(
+            "Directory for OSMnx HTTP cache.  Enabling the cache avoids redundant "
+            "Overpass API calls when the seeder runs multiple times over the same area."
+        )
+    )
+    seeder_max_neighbor_distance_m: float = Field(
+        default=300.0,
+        description=(
+            "Pre-filter radius (metres) for GraphBuilder shortest-path candidates. "
+            "Points further apart than this (straight-line) are never connected by an "
+            "edge.  Safe to use as a pre-filter because network distance >= straight-line."
+        )
+    )
+    seeder_k_neighbors: int = Field(
+        default=4,
+        description=(
+            "Maximum number of outgoing edges per guide_point (k-nearest by walk time). "
+            "4 gives enough routing options while keeping the graph sparse."
+        )
+    )
+
+    # =========================================================================
+    # Live Audio Guide — Content Pipeline (Stage 1: Draft Generation)
+    # =========================================================================
+
+    # LLM model for narrative generation; falls back to trip_planning_model if empty
+    guide_narrative_model: str = Field(
+        default="",
+        description=(
+            "io.net model for guide narrative generation (main, bonus, transition, recap). "
+            "If empty, falls back to trip_planning_model. "
+            "Recommended: meta-llama/Llama-3.3-70B-Instruct for quality."
+        )
+    )
+    guide_narrative_llm_timeout_seconds: int = Field(
+        default=30,
+        description="Per-call timeout for guide narrative LLM requests (seconds)."
+    )
+    guide_content_max_parallel_llm: int = Field(
+        default=10,
+        description=(
+            "Maximum concurrent LLM calls during content pipeline execution. "
+            "Keep ≤ 20 to respect io.net rate limits."
+        )
+    )
+    guide_content_max_llm_calls_per_job: int = Field(
+        default=5000,
+        description=(
+            "Hard cap on LLM calls per content generation job. "
+            "Prevents runaway cost from bugs. Raise for large zones."
+        )
+    )
+    guide_content_retry_attempts: int = Field(
+        default=3,
+        description="Number of retry attempts when LLM returns invalid JSON or missing fields."
+    )
+    guide_content_default_languages: list[str] = Field(
+        default_factory=lambda: ["en"],
+        description="Default language list for content generation (MVP: English only)."
+    )
+    guide_content_default_detail_levels: list[str] = Field(
+        default_factory=lambda: ["standard"],
+        description=(
+            "Default detail_level list for content generation. "
+            "MVP: ['standard'] only. Add 'brief' in next iteration."
+        )
+    )
+
+    # =========================================================================
+    # Live Audio Guide — Navigation Engine (Step 8)
+    # =========================================================================
+
+    guide_trigger_radius_default_m: int = Field(
+        default=25,
+        description="Default trigger radius in metres for guide_points that have no explicit radius set."
+    )
+    guide_preload_point_count: int = Field(
+        default=8,
+        description="Number of nearest points to preload CDN audio URLs for on session create and preload refresh."
+    )
+    guide_out_of_zone_threshold_m: float = Field(
+        default=200.0,
+        description="Distance in metres beyond which the user is considered out of zone (nearest point > threshold)."
+    )
+    guide_bonus_idle_seconds: int = Field(
+        default=120,
+        description=(
+            "Seconds the user must be stationary near a visited POI before bonus content is offered. "
+            "Resets when the user moves away (> 30 m) or a new point is triggered."
+        )
+    )
+    guide_gps_anomaly_max_speed_mps: float = Field(
+        default=16.7,
+        description=(
+            "Maximum plausible pedestrian speed in m/s (16.7 m/s ≈ 60 km/h). "
+            "GPS samples implying higher speeds are flagged as anomalies and ignored."
+        )
+    )
+    guide_preload_refresh_distance_m: float = Field(
+        default=50.0,
+        description="Minimum distance (metres) the user must move from the last preload position to trigger a refresh."
+    )
+    guide_max_bearing_diff_deg: float = Field(
+        default=60.0,
+        description=(
+            "Maximum angular difference (degrees) between the user's movement bearing and an edge bearing "
+            "for the edge to be selected as the active transition direction."
+        )
+    )
+
+    # =========================================================================
+    # Live Audio Guide — City Seeder (Knowledge Collector — Phase 4)
+    # =========================================================================
+
+    wikipedia_timeout_seconds: int = Field(
+        default=10,
+        description="HTTP timeout (seconds) for Wikipedia REST API calls"
+    )
+    wikipedia_user_agent: str = Field(
+        default="Locally-LiveGuide/1.0 (contact@locally.app)",
+        description=(
+            "User-Agent header sent to Wikipedia and Wikidata APIs. "
+            "Both services require a descriptive User-Agent per their usage policy."
+        )
+    )
+    wikidata_timeout_seconds: int = Field(
+        default=15,
+        description=(
+            "HTTP timeout (seconds) for Wikidata SPARQL endpoint. "
+            "SPARQL queries run server-side and can be slower than REST endpoints."
+        )
+    )
+    wikidata_endpoint: str = Field(
+        default="https://query.wikidata.org/sparql",
+        description="Wikidata SPARQL query endpoint URL"
+    )
+    knowledge_collector_max_parallel: int = Field(
+        default=5,
+        description=(
+            "Maximum number of guide_points processed concurrently per zone "
+            "by KnowledgeCollector (semaphore limit). "
+            "Each point makes up to 3 external API calls — keep low to respect rate limits."
+        )
+    )
+
+    # =========================================================================
+    # Live Audio Guide — Streaming Q&A Pipeline (Step 10)
+    # =========================================================================
+
+    guide_qa_model: str = Field(
+        default="",
+        description=(
+            "io.net model for Q&A answers. "
+            "If empty, falls back to trip_chat_model."
+        )
+    )
+    guide_qa_llm_timeout_seconds: int = Field(
+        default=8,
+        description="LLM call timeout for Q&A pipeline (seconds)."
+    )
+    guide_qa_max_answer_tokens: int = Field(
+        default=150,
+        description="Max tokens in Q&A LLM answer (keep short for audio — 2-4 sentences)."
+    )
+    guide_qa_max_audio_bytes: int = Field(
+        default=5_242_880,
+        description="Max audio upload size for Q&A (bytes). Default: 5 MB."
+    )
+    guide_qa_max_transcript_chars: int = Field(
+        default=200,
+        description="Max transcript length to send to LLM (safety truncation)."
+    )
+    guide_qa_questions_per_90s: int = Field(
+        default=1,
+        description="Max Q&A questions per 90 seconds of billed time."
+    )
+
+
 
 # Global settings instance
 settings = Settings()

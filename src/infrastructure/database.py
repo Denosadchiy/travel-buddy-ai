@@ -1,6 +1,8 @@
 """
 Database connection and session management using async SQLAlchemy.
 """
+from contextlib import asynccontextmanager
+
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from src.config import settings
@@ -25,6 +27,24 @@ AsyncSessionLocal = async_sessionmaker(
     class_=AsyncSession,
     expire_on_commit=False,
 )
+
+
+@asynccontextmanager
+async def get_db_session():
+    """
+    Async context manager for script / CLI use.
+
+    Usage::
+        async with get_db_session() as db:
+            repo = SomeRepository(db)
+            await db.commit()
+    """
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
 
 
 async def get_db() -> AsyncSession:

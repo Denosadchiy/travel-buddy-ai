@@ -620,3 +620,29 @@ def get_hotel_ranking_llm_client(app_settings: Optional[Settings] = None) -> LLM
         return AnthropicLLMClient(model=model)
     else:
         raise ValueError(f"Unknown LLM provider: {s.llm_provider}.")
+
+
+def get_guide_narrative_llm_client(app_settings: Optional[Settings] = None) -> LLMClient:
+    """
+    Factory for guide narrative generation (Content Pipeline Stage 1: Draft Generation).
+    Uses guide_narrative_model if set, otherwise falls back to trip_planning_model.
+    temperature=0.85 for creative narrative variety (higher = more varied openings).
+    max_output_tokens=800 (narratives bounded by word_count in the prompt).
+    """
+    s = app_settings or settings
+    model = s.guide_narrative_model if s.guide_narrative_model else s.trip_planning_model
+
+    if s.llm_provider == "ionet":
+        if not s.ionet_api_key:
+            raise ValueError("IO Intelligence API key is required. Set IONET_API_KEY.")
+        return IoNetLLMClient(
+            api_key=s.ionet_api_key,
+            model=model,
+            max_output_tokens=800,
+            temperature=0.85,
+            base_url=s.ionet_base_url,
+        )
+    elif s.llm_provider == "anthropic":
+        return AnthropicLLMClient(model=model)
+    else:
+        raise ValueError(f"Unknown LLM provider: {s.llm_provider}.")

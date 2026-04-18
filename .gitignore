@@ -95,3 +95,13 @@ web/node_modules/
 web/dist/
 web/.env
 web/.env.local
+
+.mcp.json
+tmp/
+
+# Live Guide — audio/data artifacts (transferred separately)
+data/audio/
+*.mp3
+*.wav
+guide_data_*.sql
+guide_audio_*.tar.gz
