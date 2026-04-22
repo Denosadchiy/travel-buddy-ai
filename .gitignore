@@ -72,6 +72,7 @@ test_*.log
 test_*.json
 !tests/test_*.py
 *_REPORT.md
+!docs/live-guide/*_REPORT.md
 *_STATUS.md
 *_SUMMARY.md
 *_FIXES*.md
